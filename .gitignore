@@ -1,0 +1,8 @@
+build/
+*.o
+*.a
+*.so
+*.log
+*.db
+*.sqlite
+compile_commands.json
