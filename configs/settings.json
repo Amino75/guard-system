@@ -1,0 +1,29 @@
+{
+    "application":
+    {
+        "name": "Guard System",
+        "version": "1.0"
+    },
+
+    "logging":
+    {
+        "file": "logs/guard.log",
+        "level": "DEBUG"
+    },
+    
+    "webserver":
+    {
+        "port": 8443
+    },
+
+    "mqtt":
+    {
+        "host": "localhost",
+        "port": 1883
+    },
+
+    "camera":
+    {
+        "device": 0
+    }
+}
