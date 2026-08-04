@@ -27,7 +27,11 @@ target_compile_options(guard-system PRIVATE
     -Wpedantic
 )
 
-target_link_libraries(guard-system PRIVATE pthread)
+target_link_libraries(guard-system
+    PRIVATE
+    pthread
+    rt
+)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
