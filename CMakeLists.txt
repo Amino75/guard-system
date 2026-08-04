@@ -6,9 +6,14 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_executable(guard-system
     src/main.c
+
     src/common/logger.c
     src/common/config.c
+
+    src/utils/utils.c
+
     src/shared_memory/shared_memory.c
+
     third_party/cJSON/cJSON.c
 )
 
