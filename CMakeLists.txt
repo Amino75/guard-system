@@ -5,7 +5,10 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_executable(guard-system
+
     src/main.c
+
+    src/application/application.c
 
     src/common/logger.c
     src/common/config.c
