@@ -9,9 +9,12 @@ add_executable(guard-system
     src/common/logger.c
     src/common/config.c
     src/shared_memory/shared_memory.c
+    third_party/cJSON/cJSON.c
 )
 
-target_include_directories(guard-system PRIVATE include)
+target_include_directories(guard-system PRIVATE
+    include
+    third_party/cJSON)
 
 target_compile_options(guard-system PRIVATE
     -Wall
