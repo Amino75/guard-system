@@ -16,13 +16,16 @@ add_executable(guard-system
     src/utils/utils.c
 
     src/shared_memory/shared_memory.c
-
+    
+    src/web/web_server.c
     third_party/cJSON/cJSON.c
+    third_party/mongoose/mongoose.c
 )
 
 target_include_directories(guard-system PRIVATE
     include
-    third_party/cJSON)
+    third_party/cJSON
+    third_party/mongoose)
 
 target_compile_options(guard-system PRIVATE
     -Wall

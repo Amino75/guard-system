@@ -3,6 +3,7 @@ import time
 from config import Config
 from camera import Camera
 from jpeg_writer import JpegWriter
+from detector import PersonDetector
 
 
 def main():
@@ -18,6 +19,8 @@ def main():
         vision.jpeg_quality
     )
 
+    detector = PersonDetector()
+
     camera.open()
 
     print("Camera opened successfully")
@@ -31,6 +34,10 @@ def main():
 
             frame = camera.read()
 
+            person_count = detector.detect(frame)
+
+            
+
             writer.save(frame)
 
             frame_count += 1
@@ -43,7 +50,9 @@ def main():
                 print(
                     f"Frames: {frame_count:5d} | "
                     f"FPS: {fps:.2f}"
+                    f"Persons: {person_count}"
                 )
+                
 
     except KeyboardInterrupt:
 

@@ -24,13 +24,13 @@
 
     "vision": {
         "jpeg_path": "html/live/latest.jpg",
-        "jpeg_quality": 40
+        "jpeg_quality": 90
     },
     
     "camera": {
         "device": 1,
-        "width": 160,
-        "height": 120,
+        "width": 640,
+        "height": 480,
         "fps": 30
     }
 }

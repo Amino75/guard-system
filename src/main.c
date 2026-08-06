@@ -3,7 +3,6 @@
 #include "application/application.h"
 
 
-
 int main(void)
 {
 
@@ -17,13 +16,10 @@ int main(void)
     }
 
 
-
     application_run();
 
 
-
     application_shutdown();
-
 
 
     return 0;

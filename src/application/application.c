@@ -7,7 +7,7 @@
 #include "common/logger.h"
 #include "shared_memory/shared_memory.h"
 #include "utils/utils.h"
-
+#include "web/web_server.h"
 
 
 static volatile sig_atomic_t running = 1;
@@ -60,7 +60,14 @@ int application_init(void)
         return -1;
     }
 
+    if(web_server_init() != 0)
+    {
+        log_error(
+            "Web server initialization failed"
+        );
 
+        return -1;
+    }
 
     log_info("Application initialization");
 
@@ -120,7 +127,7 @@ void application_run(void)
 
     while(running)
     {
-
+        web_server_poll();
         telemetry_t *data =
             shm_get();
 
@@ -168,7 +175,7 @@ void application_shutdown(void)
         "Application shutdown"
     );
 
-
+    web_server_stop();
     shm_destroy();
 
 
