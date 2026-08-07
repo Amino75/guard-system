@@ -14,12 +14,13 @@ def main():
 
     vision = config.vision()
 
+    detector = PersonDetector()
+
     writer = JpegWriter(
         vision.jpeg_path,
         vision.jpeg_quality
     )
 
-    detector = PersonDetector()
 
     camera.open()
 
@@ -28,39 +29,61 @@ def main():
     frame_count = 0
     start_time = time.time()
 
+    person_count = 0
+
+    DETECTION_INTERVAL = 10
+
+
     try:
 
         while True:
 
             frame = camera.read()
 
-            person_count = detector.detect(frame)
+            frame_count += 1
 
-            
 
+        # Run YOLO only every N frames
+            if frame_count % DETECTION_INTERVAL == 0:
+
+                start = time.time()
+
+                person_count = detector.detect(frame)
+
+                end = time.time()
+
+                print(
+                    f"MobileNet-SSD inference: {(end-start)*1000:.1f} ms | "
+                    f"Persons: {person_count}"
+                )
+
+
+        # Always update image
             writer.save(frame)
 
-            frame_count += 1
+
 
             if frame_count % 30 == 0:
 
                 elapsed = time.time() - start_time
+
                 fps = frame_count / elapsed
 
                 print(
-                    f"Frames: {frame_count:5d} | "
-                    f"FPS: {fps:.2f}"
+                    f"Camera FPS: {fps:.2f} | "
                     f"Persons: {person_count}"
                 )
-                
+
 
     except KeyboardInterrupt:
 
         print("\nStopping...")
 
+
     finally:
 
         camera.release()
+
         print("Camera released")
 
 

@@ -1,104 +1,53 @@
 import cv2
-import numpy as np
-import onnxruntime as ort
 
 
 class PersonDetector:
 
-    def __init__(
-        self,
-        model_path="../../models/yolov8n.onnx",
-        confidence=0.5
-    ):
+    def __init__(self):
 
-        self.confidence = confidence
+        model_path = "../../models/MobileNetSSD_deploy.caffemodel"
+        config_path = "../../models/MobileNetSSD_deploy.prototxt"
 
-        self.session = ort.InferenceSession(
-            model_path,
-            providers=[
-                "CPUExecutionProvider"
-            ]
+        self.net = cv2.dnn.readNetFromCaffe(
+            config_path,
+            model_path
         )
 
-        self.input_name = (
-            self.session
-            .get_inputs()[0]
-            .name
-        )
+        self.confidence = 0.5
 
-        self.input_size = 640
+        # MobileNet-SSD class ID for person
+        self.person_class = 15
 
-        print("YOLO model loaded")
+        print("MobileNet SSD loaded")
 
 
     def detect(self, frame):
 
-        input_image = cv2.resize(
-            frame,
-            (
-                self.input_size,
-                self.input_size
-            )
+        blob = cv2.dnn.blobFromImage(
+            cv2.resize(frame, (300, 300)),
+            0.007843,
+            (300, 300),
+            127.5
         )
 
-        input_image = cv2.cvtColor(
-            input_image,
-            cv2.COLOR_BGR2RGB
-        )
+        self.net.setInput(blob)
 
-        input_image = (
-            input_image.astype(np.float32)
-            / 255.0
-        )
-
-        input_image = np.transpose(
-            input_image,
-            (2, 0, 1)
-        )
-
-        input_image = np.expand_dims(
-            input_image,
-            axis=0
-        )
-
-
-        outputs = self.session.run(
-            None,
-            {
-                self.input_name:
-                input_image
-            }
-        )
-
-
-        return self.count_persons(
-            outputs[0]
-        )
-
-
-    def count_persons(self, output):
+        detections = self.net.forward()
 
         count = 0
 
-        predictions = output[0].T
+        for i in range(detections.shape[2]):
 
+            confidence = detections[0, 0, i, 2]
 
-        for detection in predictions:
-
-            class_scores = detection[4:]
-
-            class_id = np.argmax(
-                class_scores
+            class_id = int(
+                detections[0, 0, i, 1]
             )
 
-            score = class_scores[class_id]
-
-
             if (
-                class_id == 0
-                and score > self.confidence
+                class_id == self.person_class
+                and confidence >= self.confidence
             ):
                 count += 1
-
 
         return count
