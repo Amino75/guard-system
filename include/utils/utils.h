@@ -5,14 +5,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
-
 /*
  * Time utilities
  */
 
 /* Get current timestamp string */
 void utils_get_timestamp(char *buffer, size_t size);
-
 
 /* Get monotonic time in milliseconds */
 uint64_t utils_get_time_ms(void);
@@ -33,7 +31,6 @@ void utils_sleep_ms(unsigned int ms);
 /* Check if file exists */
 bool utils_file_exists(const char *path);
 
-
 /* Create directory if it does not exist */
 int utils_create_directory(const char *path);
 
@@ -43,17 +40,24 @@ int utils_create_directory(const char *path);
  */
 
 /* Safe string copy */
-void utils_str_copy(char *dest,
-                    const char *src,
-                    size_t size);
+void utils_str_copy(
+    char *dest,
+    const char *src,
+    size_t size
+);
 
 
 /*
  * System utilities
  */
 
-/* Read CPU temperature */
+/* Read CPU temperature in Celsius */
 float utils_get_cpu_temperature(void);
 
+/* Read free memory in bytes */
+uint64_t utils_get_free_memory(void);
+
+/* Read CPU usage as percentage */
+float utils_get_cpu_usage(void);
 
 #endif

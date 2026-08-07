@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>Guard System</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 30px;
+            background: #f2f2f2;
+            color: #222;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: auto;
+        }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        .student {
+            margin-bottom: 25px;
+            color: #555;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        .stream-placeholder {
+            width: 100%;
+            max-width: 640px;
+            height: 360px;
+            background: #222;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-top: 10px;
+        }
+
+        .telemetry {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+        }
+
+        .value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Guard System</h1>
+
+    <div class="student">
+        Student: Amin Feizi<br>
+        Student ID: 404211106
+    </div>
+
+    <div class="card">
+        <h2>Live Video</h2>
+
+        <div class="stream-placeholder">
+            MJPEG stream will appear here
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Person Detection</h2>
+
+        <p>
+            Person Count:
+            <span id="person-count" class="value">0</span>
+        </p>
+    </div>
+
+    <div class="card">
+        <h2>System Telemetry</h2>
+
+        <div class="telemetry">
+
+            <div>
+                <div>CPU Temperature</div>
+                <div id="cpu-temp" class="value">--</div>
+            </div>
+
+            <div>
+                <div>Free Memory</div>
+                <div id="free-memory" class="value">--</div>
+            </div>
+
+            <div>
+                <div>CPU Usage</div>
+                <div id="cpu-usage" class="value">--</div>
+            </div>
+
+        </div>
+    </div>
+
+</div>
+
+<script>
+
+function updateTelemetry()
+{
+    fetch('/telemetry')
+        .then(response => response.json())
+        .then(data =>
+        {
+            document.getElementById("cpu-temp").innerHTML =
+                data.cpu_temp.toFixed(2) + " °C";
+
+
+            document.getElementById("free-memory").innerHTML =
+                (data.free_memory / 1024 / 1024).toFixed(1)
+                + " MB";
+
+
+            document.getElementById("cpu-usage").innerHTML =
+                data.cpu_usage.toFixed(2)
+                + " %";
+        })
+        .catch(error =>
+        {
+            console.log(
+                "Telemetry error:",
+                error
+            );
+        });
+}
+
+
+
+function updatePersons()
+{
+    fetch('/persons')
+        .then(response => response.json())
+        .then(data =>
+        {
+            document.getElementById("person-count").innerHTML =
+                data.person_count;
+        })
+        .catch(error =>
+        {
+            console.log(
+                "Person count error:",
+                error
+            );
+        });
+}
+
+
+
+function updateDashboard()
+{
+    updateTelemetry();
+
+    updatePersons();
+}
+
+
+
+updateDashboard();
+
+
+setInterval(
+    updateDashboard,
+    2000
+);
+
+
+</script>
+         
+</body>
+</html>
