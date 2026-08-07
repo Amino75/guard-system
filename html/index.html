@@ -1,65 +1,65 @@
+```html
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <title>Guard System</title>
+<title>Guard System</title>
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 30px;
-            background: #f2f2f2;
-            color: #222;
-        }
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 30px;
+        background: #f2f2f2;
+        color: #222;
+    }
 
-        .container {
-            max-width: 1000px;
-            margin: auto;
-        }
+    .container {
+        max-width: 1000px;
+        margin: auto;
+    }
 
-        h1 {
-            margin-bottom: 5px;
-        }
+    h1 {
+        margin-bottom: 5px;
+    }
 
-        .student {
-            margin-bottom: 25px;
-            color: #555;
-        }
+    .student {
+        margin-bottom: 25px;
+        color: #555;
+    }
 
-        .card {
-            background: white;
-            padding: 20px;
-            margin-bottom: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-        }
+    .card {
+        background: white;
+        padding: 20px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
 
-        .stream-placeholder {
-            width: 100%;
-            max-width: 640px;
-            height: 360px;
-            background: #222;
-            color: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-top: 10px;
-        }
+    .stream-placeholder {
+        width: 100%;
+        max-width: 640px;
+        height: 360px;
+        background: #222;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-top: 10px;
+    }
 
-        .telemetry {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 15px;
-        }
+    .telemetry {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 15px;
+    }
 
-        .value {
-            font-size: 24px;
-            font-weight: bold;
-        }
-    </style>
+    .value {
+        font-size: 24px;
+        font-weight: bold;
+    }
+</style>
+
 </head>
 
 <body>
@@ -76,11 +76,11 @@
     <div class="card">
         <h2>Live Video</h2>
 
-    <img
-    src="/stream"
-    width="640"
-    height="480"
-    >
+        <img
+            src="/stream"
+            width="640"
+            height="480"
+        >
     </div>
 
     <div class="card">
@@ -117,77 +117,47 @@
 
 </div>
 
+
 <script>
 
+/*
+ * Update system telemetry
+ */
 function updateTelemetry()
 {
-    fetch('/telemetry')
+    fetch("/telemetry")
         .then(response => response.json())
-        .then(data =>
-        {
-            document.getElementById("cpu-temp").innerHTML =
-                data.cpu_temp.toFixed(2) + " °C";
+        .then(data => {
 
+            document.getElementById("cpu-temp").textContent =
+                data.temperature.toFixed(2) + " °C";
 
-            document.getElementById("free-memory").innerHTML =
-                (data.free_memory / 1024 / 1024).toFixed(1)
-                + " MB";
+            document.getElementById("free-memory").textContent =
+    		(data.memory / (1024 * 1024)).toFixed(2) + " MB";
 
+            document.getElementById("cpu-usage").textContent =
+                data.cpu.toFixed(2) + " %";
 
-            document.getElementById("cpu-usage").innerHTML =
-                data.cpu_usage.toFixed(2)
-                + " %";
         })
-        .catch(error =>
-        {
-            console.log(
-                "Telemetry error:",
-                error
-            );
+        .catch(error => {
+            console.error("Telemetry error:", error);
         });
 }
 
 
-
-function updatePersons()
-{
-    fetch('/persons')
-        .then(response => response.json())
-        .then(data =>
-        {
-            document.getElementById("person-count").innerHTML =
-                data.person_count;
-        })
-        .catch(error =>
-        {
-            console.log(
-                "Person count error:",
-                error
-            );
-        });
-}
+/*
+ * Get telemetry immediately
+ */
+updateTelemetry();
 
 
-
-function updateDashboard()
-{
-    updateTelemetry();
-
-    updatePersons();
-}
-
-
-
-updateDashboard();
-
-
-setInterval(
-    updateDashboard,
-    2000
-);
-
+/*
+ * Update telemetry every 2 seconds
+ */
+setInterval(updateTelemetry, 2000);
 
 </script>
-         
+
 </body>
 </html>
+```
