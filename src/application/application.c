@@ -1,7 +1,10 @@
 #include "application/application.h"
 
+#include "camera/camera.h"
+
 #include <signal.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "common/config.h"
 #include "common/logger.h"
@@ -9,9 +12,7 @@
 #include "utils/utils.h"
 #include "web/web_server.h"
 
-
 static volatile sig_atomic_t running = 1;
-
 
 
 static void signal_handler(int signal)
@@ -22,45 +23,58 @@ static void signal_handler(int signal)
 }
 
 
-
 int application_init(void)
 {
-
     /*
-     * Load configuration
+     * Load configuration.
      */
 
-    if(config_load("configs/settings.json") != 0)
+    if (config_load("configs/settings.json") != 0)
     {
-        printf("Configuration loading failed\n");
+        printf(
+            "Configuration loading failed\n"
+        );
+
         return -1;
     }
 
 
-
     /*
-     * Initialize logger
+     * Initialize logger.
      */
 
     const char *log_file =
         config_get_string("logging.file");
 
 
-    if(log_file == NULL)
+    if (log_file == NULL)
     {
-        printf("Log file missing\n");
+        printf(
+            "Log file missing\n"
+        );
+
         return -1;
     }
 
 
-
-    if(log_init(log_file, LOG_DEBUG) != 0)
+    if (log_init(
+        log_file,
+        LOG_DEBUG
+    ) != 0)
     {
-        printf("Logger initialization failed\n");
+        printf(
+            "Logger initialization failed\n"
+        );
+
         return -1;
     }
 
-    if(web_server_init() != 0)
+
+    /*
+     * Initialize web server.
+     */
+
+    if (web_server_init() != 0)
     {
         log_error(
             "Web server initialization failed"
@@ -69,15 +83,17 @@ int application_init(void)
         return -1;
     }
 
-    log_info("Application initialization");
 
+    log_info(
+        "Application initialization"
+    );
 
 
     /*
-     * Initialize shared memory
+     * Initialize shared memory.
      */
 
-    if(shm_init() != 0)
+    if (shm_init() != 0)
     {
         log_error(
             "Shared memory initialization failed"
@@ -87,9 +103,8 @@ int application_init(void)
     }
 
 
-
     /*
-     * Register Ctrl+C handler
+     * Register signal handlers.
      */
 
     signal(
@@ -97,12 +112,24 @@ int application_init(void)
         signal_handler
     );
 
-
     signal(
         SIGTERM,
         signal_handler
     );
 
+
+    /*
+     * Initialize camera.
+     */
+
+    if (camera_init() != 0)
+    {
+        log_error(
+            "Camera initialization failed"
+        );
+
+        return -1;
+    }
 
 
     log_info(
@@ -114,49 +141,74 @@ int application_init(void)
 }
 
 
-
-
-
 void application_run(void)
 {
-
     log_info(
         "Application main loop started"
     );
 
 
-    while(running)
+    /*
+     * Telemetry update timer.
+     */
+    time_t last_telemetry =
+        time(NULL);
+
+
+    while (running)
     {
+        /*
+         * Capture camera frame.
+         *
+         * This runs continuously.
+         */
+        camera_capture();
+
+
+        /*
+         * Process network requests.
+         */
         web_server_poll();
-        telemetry_t *data =
-            shm_get();
 
 
-        if(data)
+        /*
+         * Update telemetry approximately
+         * once per second.
+         */
+        time_t now =
+            time(NULL);
+
+
+        if (
+            now != last_telemetry
+        )
         {
+            last_telemetry =
+                now;
 
-            data->cpu_temperature =
-                utils_get_cpu_temperature();
+
+            telemetry_t *data =
+                shm_get();
 
 
-            utils_get_timestamp(
-                data->timestamp,
-                sizeof(data->timestamp)
+            if (data != NULL)
+            {
+                data->cpu_temperature =
+                    utils_get_cpu_temperature();
+
+
+                utils_get_timestamp(
+                    data->timestamp,
+                    sizeof(data->timestamp)
+                );
+            }
+
+
+            log_debug(
+                "System heartbeat"
             );
-
         }
-
-
-
-        log_debug(
-            "System heartbeat"
-        );
-
-
-        utils_sleep_ms(1000);
-
     }
-
 
 
     log_info(
@@ -165,17 +217,19 @@ void application_run(void)
 }
 
 
-
-
-
 void application_shutdown(void)
 {
-
     log_info(
         "Application shutdown"
     );
 
+
+    camera_stop();
+
+
     web_server_stop();
+
+
     shm_destroy();
 
 
@@ -183,5 +237,4 @@ void application_shutdown(void)
 
 
     log_close();
-
 }

@@ -20,6 +20,7 @@ add_executable(guard-system
     src/web/web_server.c
     third_party/cJSON/cJSON.c
     third_party/mongoose/mongoose.c
+    src/camera/camera.c
 )
 
 target_include_directories(guard-system PRIVATE
@@ -31,12 +32,18 @@ target_compile_options(guard-system PRIVATE
     -Wall
     -Wextra
     -Wpedantic
+    -DMG_TLS=MG_TLS_OPENSSL
 )
+
+find_package(OpenSSL REQUIRED)
 
 target_link_libraries(guard-system
     PRIVATE
     pthread
     rt
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    jpeg
 )
 
 if(NOT CMAKE_BUILD_TYPE)

@@ -1,0 +1,464 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+
+#include "mongoose.h"
+#include "web/web_server.h"
+
+#include "utils/utils.h"
+#include "shared_memory/shared_memory.h"
+
+
+static struct mg_mgr mgr;
+
+static int initialized = 0;
+
+static int http_listener_tag;
+static int https_listener_tag;
+
+
+static char *tls_cert = NULL;
+static char *tls_key  = NULL;
+
+
+
+static char *load_file(const char *path)
+{
+    FILE *fp = fopen(path, "rb");
+
+    if(fp == NULL)
+        return NULL;
+
+
+    fseek(fp,0,SEEK_END);
+
+    long size = ftell(fp);
+
+    rewind(fp);
+
+
+    char *buffer = malloc(size + 1);
+
+    if(buffer == NULL)
+    {
+        fclose(fp);
+        return NULL;
+    }
+
+
+    fread(buffer,1,size,fp);
+
+    buffer[size] = 0;
+
+
+    fclose(fp);
+
+    return buffer;
+}
+
+
+
+static void send_redirect(struct mg_connection *c)
+{
+    mg_http_reply(
+        c,
+        301,
+        "Location: https://%.*s/\r\n",
+        (int)c->recv.len,
+        c->recv.buf
+    );
+}
+
+
+
+static void send_jpeg(struct mg_connection *c)
+{
+    FILE *fp=fopen(
+        "html/live/latest.jpg",
+        "rb"
+    );
+
+
+    if(fp==NULL)
+        return;
+
+
+    fseek(fp,0,SEEK_END);
+
+    long size=ftell(fp);
+
+    rewind(fp);
+
+
+    if(size<=0)
+    {
+        fclose(fp);
+        return;
+    }
+
+
+    unsigned char *buf =
+        malloc(size);
+
+
+    fread(buf,1,size,fp);
+
+    fclose(fp);
+
+
+
+    mg_printf(
+        c,
+        "--frame\r\n"
+        "Content-Type: image/jpeg\r\n"
+        "Content-Length: %ld\r\n\r\n",
+        size
+    );
+
+
+    mg_send(
+        c,
+        buf,
+        size
+    );
+
+
+    mg_printf(
+        c,
+        "\r\n"
+    );
+
+
+    free(buf);
+}
+
+
+
+
+static void web_handler(
+    struct mg_connection *c,
+    int ev,
+    void *ev_data
+)
+{
+
+
+    /*
+     * HTTPS TLS initialization
+     */
+
+    if(ev == MG_EV_ACCEPT &&
+       c->fn_data == &https_listener_tag)
+    {
+
+        struct mg_tls_opts opts =
+        {
+            .cert = mg_str(tls_cert),
+            .key  = mg_str(tls_key)
+        };
+
+
+        mg_tls_init(
+            c,
+            &opts
+        );
+
+
+        return;
+    }
+
+
+
+    /*
+     * HTTP -> HTTPS redirect
+     */
+
+    if(ev == MG_EV_HTTP_MSG)
+    {
+
+        struct mg_http_message *hm =
+            (struct mg_http_message *)ev_data;
+
+
+
+        if(c->fn_data == &http_listener_tag)
+        {
+
+            mg_http_reply(
+                c,
+                301,
+                "Location: https://192.168.1.200%.*s\r\n",
+                (int)hm->uri.len,
+                hm->uri.buf
+            );
+
+
+            return;
+        }
+
+
+
+        /*
+         * Telemetry
+         */
+
+
+        if(
+          mg_match(
+            hm->uri,
+            mg_str("/telemetry"),
+            NULL)
+        )
+        {
+
+            mg_http_reply(
+                c,
+                200,
+                "Content-Type: application/json\r\n",
+                "{"
+                "\"temperature\":%.2f,"
+                "\"memory\":%llu,"
+                "\"cpu\":%.2f"
+                "}",
+                utils_get_cpu_temperature(),
+                (unsigned long long)
+                    utils_get_free_memory(),
+                utils_get_cpu_usage()
+            );
+
+
+            return;
+        }
+
+
+
+
+        /*
+         * Persons
+         */
+
+        if(
+          mg_match(
+            hm->uri,
+            mg_str("/persons"),
+            NULL)
+        )
+        {
+
+            telemetry_t *data =
+                shm_get();
+
+
+            uint32_t count=0;
+
+
+            if(data)
+                count=data->person_count;
+
+
+
+            mg_http_reply(
+                c,
+                200,
+                "Content-Type: application/json\r\n",
+                "{\"person_count\":%u}",
+                count
+            );
+
+
+            return;
+        }
+
+
+
+
+        /*
+         * MJPEG
+         */
+
+        if(
+          mg_match(
+            hm->uri,
+            mg_str("/stream"),
+            NULL)
+        )
+        {
+
+            mg_printf(
+                c,
+                "HTTP/1.1 200 OK\r\n"
+                "Content-Type: multipart/x-mixed-replace;"
+                "boundary=frame\r\n"
+                "Cache-Control: no-cache\r\n\r\n"
+            );
+
+
+            c->data[0]=1;
+
+
+            return;
+        }
+
+
+
+
+        /*
+         * Dashboard
+         */
+
+        struct mg_http_serve_opts opts =
+        {
+            .root_dir="./html"
+        };
+
+
+        mg_http_serve_dir(
+            c,
+            hm,
+            &opts
+        );
+
+        return;
+
+    }
+
+
+
+    /*
+     * Stream frames
+     */
+
+    if(ev == MG_EV_POLL)
+    {
+
+        if(c->data[0]==1)
+        {
+            send_jpeg(c);
+        }
+
+    }
+
+}
+
+
+
+
+int web_server_init(void)
+{
+
+    mg_mgr_init(&mgr);
+
+
+
+    tls_cert =
+        load_file(
+            "cert/server.crt"
+        );
+
+
+    tls_key =
+        load_file(
+            "cert/server.key"
+        );
+
+
+
+    if(!tls_cert || !tls_key)
+    {
+        printf(
+            "TLS files missing\n"
+        );
+
+        return -1;
+    }
+
+
+
+
+    struct mg_connection *http =
+        mg_http_listen(
+            &mgr,
+            "http://0.0.0.0:80",
+            web_handler,
+            &http_listener_tag
+        );
+
+
+    if(http==NULL)
+    {
+        printf(
+            "HTTP failed\n"
+        );
+
+        return -1;
+    }
+
+
+
+
+
+    struct mg_connection *https =
+        mg_http_listen(
+            &mgr,
+            "tcp://0.0.0.0:443",
+            web_handler,
+            &https_listener_tag
+        );
+
+
+
+    if(https==NULL)
+    {
+        printf(
+            "HTTPS failed\n"
+        );
+
+        return -1;
+    }
+
+
+
+    initialized=1;
+
+
+    printf(
+        "Web server ready\n"
+    );
+
+
+    return 0;
+}
+
+
+
+
+
+void web_server_poll(void)
+{
+    if(initialized)
+        mg_mgr_poll(
+            &mgr,
+            10
+        );
+}
+
+
+
+
+
+void web_server_stop(void)
+{
+
+    if(initialized)
+    {
+        mg_mgr_free(&mgr);
+
+        initialized=0;
+    }
+
+
+    free(tls_cert);
+    free(tls_key);
+
+}
