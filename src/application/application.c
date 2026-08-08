@@ -1,5 +1,5 @@
 #include "application/application.h"
-
+#include "history/history.h"
 #include "camera/camera.h"
 
 #include <signal.h>
@@ -102,6 +102,18 @@ int application_init(void)
         return -1;
     }
 
+/*
+ * Initialize history.
+ */
+
+if (history_init() != 0)
+{
+    log_error(
+        "History initialization failed"
+    );
+
+    return -1;
+}
 
     /*
      * Register signal handlers.
@@ -191,17 +203,33 @@ void application_run(void)
                 shm_get();
 
 
-            if (data != NULL)
-            {
-                data->cpu_temperature =
-                    utils_get_cpu_temperature();
+if (data != NULL)
+{
+    data->cpu_temperature =
+        utils_get_cpu_temperature();
 
 
-                utils_get_timestamp(
-                    data->timestamp,
-                    sizeof(data->timestamp)
-                );
-            }
+    utils_get_timestamp(
+        data->timestamp,
+        sizeof(data->timestamp)
+    );
+
+
+    /*
+     * Add current telemetry to history.
+     */
+    if (
+        history_add(
+            data->person_count,
+            data->cpu_temperature
+        ) != 0
+    )
+    {
+        log_error(
+            "Failed to add history entry"
+        );
+    }
+}
 
 
             log_debug(
@@ -229,7 +257,7 @@ void application_shutdown(void)
 
     web_server_stop();
 
-
+history_shutdown();
     shm_destroy();
 
 

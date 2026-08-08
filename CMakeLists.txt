@@ -16,7 +16,7 @@ add_executable(guard-system
     src/utils/utils.c
 
     src/shared_memory/shared_memory.c
-    
+    src/history/history.c    
     src/web/web_server.c
     third_party/cJSON/cJSON.c
     third_party/mongoose/mongoose.c
@@ -45,7 +45,25 @@ target_link_libraries(guard-system
     OpenSSL::Crypto
     jpeg
 )
+add_library(guard_api SHARED
 
+    src/api/guard_api.c
+
+    src/utils/utils.c
+
+    src/shared_memory/shared_memory.c
+
+    src/history/history.c
+)
+target_include_directories(guard_api PRIVATE
+    include
+)
+
+target_link_libraries(guard_api
+    PRIVATE
+    rt
+    pthread
+)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type" FORCE)
 endif()
