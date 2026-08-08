@@ -31,7 +31,7 @@ static int jpeg_quality = 80;
 
 static unsigned char *last_jpeg = NULL;
 static size_t last_jpeg_size = 0;
-
+static uint64_t frame_id = 0;
 
 /*
  * V4L2 ioctl wrapper
@@ -633,7 +633,6 @@ static void yuyv_to_jpeg(
     );
 }
 
-
 /*
  * Capture one frame.
  */
@@ -673,7 +672,6 @@ int camera_capture(void)
     /*
      * Convert current frame.
      */
-
     unsigned char *new_jpeg =
         NULL;
 
@@ -692,7 +690,6 @@ int camera_capture(void)
      * Replace previous frame only after
      * successful JPEG creation.
      */
-
     if (new_jpeg != NULL)
     {
         free(last_jpeg);
@@ -702,13 +699,17 @@ int camera_capture(void)
 
         last_jpeg_size =
             (size_t)jpeg_size;
+
+        /*
+         * New camera frame is now available.
+         */
+        frame_id++;
     }
 
 
     /*
      * Return camera buffer to driver.
      */
-
     if (xioctl(
         fd,
         VIDIOC_QBUF,
@@ -721,6 +722,13 @@ int camera_capture(void)
 
 
     return 0;
+}
+
+
+
+uint64_t camera_get_frame_id(void)
+{
+    return frame_id;
 }
 
 
@@ -794,6 +802,7 @@ void camera_stop(void)
 
     last_jpeg_size = 0;
 
+    frame_id = 0;
 
     printf(
         "Camera stopped\n"
