@@ -3,7 +3,11 @@ import time
 from config import Config
 from detector import PersonDetector
 from shared_memory import SharedMemoryReader
+from pathlib import Path
 
+DETECTION_DISABLE_FILE = Path(
+    "/tmp/guard-system-detection.disabled"
+)
 
 def main():
 
@@ -98,8 +102,20 @@ def main():
             frame_count += 1
 
 
-            if (
+            detection_runtime_enabled = (
                 detection.enabled
+                and not DETECTION_DISABLE_FILE.exists()
+            )
+
+            if frame_count % 30 == 0:
+
+                if detection_runtime_enabled:
+                    print("Detection state: ENABLED")
+                else:
+                    print("Detection state: DISABLED")
+
+            if (
+                detection_runtime_enabled
                 and detector is not None
                 and frame_count % detection.interval == 0
             ):
@@ -130,7 +146,7 @@ def main():
                 )
 
 
-            elif not detection.enabled:
+            elif not detection_runtime_enabled:
 
                 person_count = 0
 

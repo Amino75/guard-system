@@ -1,0 +1,644 @@
+#include "camera/camera.h"
+#include "shared_memory/shared_memory.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <linux/videodev2.h>
+
+#include <jpeglib.h>
+
+#include "common/config.h"
+
+#define BUFFER_COUNT 4
+
+struct buffer
+{
+    void *start;
+    size_t length;
+};
+
+static int fd = -1;
+
+static struct buffer buffers[BUFFER_COUNT];
+
+static int width = 640;
+static int height = 480;
+static int jpeg_quality = 80;
+
+static unsigned char *last_jpeg = NULL;
+static size_t last_jpeg_size = 0;
+static uint64_t frame_id = 0;
+
+static telemetry_t *shared_data = NULL;
+
+/*
+ * V4L2 ioctl wrapper
+ */
+static int xioctl(
+    int fd,
+    unsigned long request,
+    void *arg
+)
+{
+    int r;
+
+    do
+    {
+        r = ioctl(fd, request, arg);
+
+    } while (r == -1);
+
+    return r;
+}
+
+
+/*
+ * Clamp RGB value to 0..255
+ */
+static unsigned char clamp_rgb(int x)
+{
+    if (x < 0)
+        return 0;
+
+    if (x > 255)
+        return 255;
+
+    return (unsigned char)x;
+}
+
+
+/*
+ * Initialize camera
+ *
+ * Configuration:
+ *
+ * camera.device
+ * camera.width
+ * camera.height
+ * camera.fps
+ *
+ * vision.jpeg_quality
+ */
+int camera_init(void)
+{
+    int device_number;
+    int fps;
+
+    /*
+     * Read camera configuration
+     */
+
+    device_number =
+        config_get_int("camera.device");
+
+    width =
+        config_get_int("camera.width");
+
+    height =
+        config_get_int("camera.height");
+
+    fps =
+        config_get_int("camera.fps");
+
+    jpeg_quality =
+        config_get_int("vision.jpeg_quality");
+
+
+    /*
+     * Basic fallback values
+     */
+
+    if (width <= 0)
+        width = 640;
+
+    if (height <= 0)
+        height = 480;
+
+    if (jpeg_quality <= 0 || jpeg_quality > 100)
+        jpeg_quality = 80;
+
+    if (fps <= 0)
+        fps = 30;
+
+
+    /*
+     * Build device path
+     */
+
+    char device[32];
+
+    snprintf(
+        device,
+        sizeof(device),
+        "/dev/video%d",
+        device_number
+    );
+
+
+    printf(
+        "Opening camera: %s\n",
+        device
+    );
+
+    printf(
+        "Camera configuration: %dx%d @ %d FPS, JPEG quality %d\n",
+        width,
+        height,
+        fps,
+        jpeg_quality
+    );
+
+
+    /*
+     * Open V4L2 device
+     */
+
+    fd = open(
+        device,
+        O_RDWR
+    );
+
+    if (fd < 0)
+    {
+        perror("camera open");
+        return -1;
+    }
+
+
+    /*
+     * Configure pixel format
+     */
+
+    struct v4l2_format fmt;
+
+    memset(
+        &fmt,
+        0,
+        sizeof(fmt)
+    );
+
+    fmt.type =
+        V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    fmt.fmt.pix.width =
+        width;
+
+    fmt.fmt.pix.height =
+        height;
+
+    fmt.fmt.pix.pixelformat =
+        V4L2_PIX_FMT_YUYV;
+
+    fmt.fmt.pix.field =
+        V4L2_FIELD_NONE;
+
+
+    if (xioctl(
+        fd,
+        VIDIOC_S_FMT,
+        &fmt
+    ) < 0)
+    {
+        perror("VIDIOC_S_FMT");
+        close(fd);
+        fd = -1;
+        return -1;
+    }
+
+
+    /*
+     * Use the actual format accepted by the driver.
+     *
+     * This prevents our software from assuming a format
+     * that the camera did not actually provide.
+     */
+
+    width =
+        fmt.fmt.pix.width;
+
+    height =
+        fmt.fmt.pix.height;
+
+
+    /*
+     * Configure requested frame interval.
+     *
+     * The camera may choose the closest supported FPS.
+     */
+
+    struct v4l2_streamparm stream;
+
+    memset(
+        &stream,
+        0,
+        sizeof(stream)
+    );
+
+    stream.type =
+        V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    stream.parm.capture.timeperframe.numerator =
+        1;
+
+    stream.parm.capture.timeperframe.denominator =
+        fps;
+
+
+    if (xioctl(
+        fd,
+        VIDIOC_S_PARM,
+        &stream
+    ) < 0)
+    {
+        /*
+         * Not fatal.
+         *
+         * Some cameras/drivers don't allow changing
+         * the frame interval.
+         */
+        perror("VIDIOC_S_PARM");
+    }
+
+
+    /*
+     * Report actual FPS selected by driver.
+     */
+
+    if (stream.parm.capture.timeperframe.numerator != 0)
+    {
+        double actual_fps =
+            (double)stream.parm.capture.timeperframe.denominator /
+            (double)stream.parm.capture.timeperframe.numerator;
+
+        printf(
+            "Camera actual FPS: %.2f\n",
+            actual_fps
+        );
+    }
+
+
+    /*
+     * Request MMAP buffers
+     */
+
+    struct v4l2_requestbuffers req;
+
+    memset(
+        &req,
+        0,
+        sizeof(req)
+    );
+
+    req.count =
+        BUFFER_COUNT;
+
+    req.type =
+        V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    req.memory =
+        V4L2_MEMORY_MMAP;
+
+
+    if (xioctl(
+        fd,
+        VIDIOC_REQBUFS,
+        &req
+    ) < 0)
+    {
+        perror("VIDIOC_REQBUFS");
+        close(fd);
+        fd = -1;
+        return -1;
+    }
+
+
+    /*
+     * Make sure the driver gave us enough buffers.
+     */
+
+    if (req.count < 2)
+    {
+        fprintf(
+            stderr,
+            "Camera returned too few buffers: %u\n",
+            req.count
+        );
+
+        close(fd);
+        fd = -1;
+        return -1;
+    }
+
+
+    /*
+     * Map camera buffers.
+     */
+
+    for (unsigned int i = 0;
+         i < req.count && i < BUFFER_COUNT;
+         i++)
+    {
+        struct v4l2_buffer buf;
+
+        memset(
+            &buf,
+            0,
+            sizeof(buf)
+        );
+
+        buf.type =
+            V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        buf.memory =
+            V4L2_MEMORY_MMAP;
+
+        buf.index =
+            i;
+
+
+        if (xioctl(
+            fd,
+            VIDIOC_QUERYBUF,
+            &buf
+        ) < 0)
+        {
+            perror("VIDIOC_QUERYBUF");
+
+            close(fd);
+            fd = -1;
+
+            return -1;
+        }
+
+
+        buffers[i].length =
+            buf.length;
+
+
+        buffers[i].start =
+            mmap(
+                NULL,
+                buf.length,
+                PROT_READ | PROT_WRITE,
+                MAP_SHARED,
+                fd,
+                buf.m.offset
+            );
+
+
+        if (buffers[i].start == MAP_FAILED)
+        {
+            perror("mmap");
+
+            close(fd);
+            fd = -1;
+
+            return -1;
+        }
+
+
+        if (xioctl(
+            fd,
+            VIDIOC_QBUF,
+            &buf
+        ) < 0)
+        {
+            perror("VIDIOC_QBUF");
+
+            return -1;
+        }
+    }
+
+
+    /*
+     * Start streaming.
+     */
+
+    enum v4l2_buf_type type =
+        V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+
+    if (xioctl(
+        fd,
+        VIDIOC_STREAMON,
+        &type
+    ) < 0)
+    {
+        perror("VIDIOC_STREAMON");
+
+        return -1;
+    }
+
+
+    printf(
+    "Camera started\n"
+);
+printf(
+    "Camera started\n"
+);
+
+
+/*
+ * Get shared-memory pointer.
+ *
+ * shared memory is initialized by the application
+ * before the camera is initialized.
+ */
+shared_data = shm_get();
+
+if (shared_data == NULL)
+{
+    fprintf(
+        stderr,
+        "Camera: shared memory is not available\n"
+    );
+
+    camera_stop();
+
+    return -1;
+}
+
+
+/*
+ * Initialize raw-frame metadata.
+ */
+shared_data->frame_width =
+    (uint32_t)width;
+
+shared_data->frame_height =
+    (uint32_t)height;
+
+shared_data->frame_size =
+    (uint32_t)(width * height * 2);
+
+shared_data->frame_sequence = 0;
+
+
+printf(
+    "Camera shared-memory frame: %dx%d YUYV (%u bytes)\n",
+    shared_data->frame_width,
+    shared_data->frame_height,
+    shared_data->frame_size
+);
+
+return 0;
+}
+
+
+/*
+ * Convert YUYV frame to RGB JPEG.
+ */
+static void yuyv_to_jpeg(
+    unsigned char *yuyv,
+    unsigned char **jpeg,
+    unsigned long *jpeg_size
+)
+{
+    struct jpeg_compress_struct cinfo;
+
+    struct jpeg_error_mgr jerr;
+
+
+    cinfo.err =
+        jpeg_std_error(&jerr);
+
+
+    jpeg_create_compress(
+        &cinfo
+    );
+
+
+    jpeg_mem_dest(
+        &cinfo,
+        jpeg,
+        jpeg_size
+    );
+
+
+    cinfo.image_width =
+        width;
+
+    cinfo.image_height =
+        height;
+
+    cinfo.input_components =
+        3;
+
+    cinfo.in_color_space =
+        JCS_RGB;
+
+
+    jpeg_set_defaults(
+        &cinfo
+    );
+
+
+    jpeg_set_quality(
+        &cinfo,
+        jpeg_quality,
+        TRUE
+    );
+
+
+    jpeg_start_compress(
+        &cinfo,
+        TRUE
+    );
+
+
+    unsigned char *row =
+        malloc(
+            (size_t)width * 3
+        );
+
+
+    if (row == NULL)
+    {
+        jpeg_destroy_compress(
+            &cinfo
+        );
+
+        return;
+    }
+
+
+    while (
+        cinfo.next_scanline <
+        (JDIMENSION)height
+    )
+    {
+        int y_index =
+            (int)cinfo.next_scanline *
+            width *
+            2;
+
+
+        for (
+            int x = 0;
+            x < width;
+            x += 2
+        )
+        {
+            int index =
+                y_index + x * 2;
+
+
+            int y0 =
+                yuyv[index + 0];
+
+            int u =
+                yuyv[index + 1];
+
+            int y1 =
+                yuyv[index + 2];
+
+            int v =
+                yuyv[index + 3];
+
+
+            int d =
+                u - 128;
+
+            int e =
+                v - 128;
+
+
+            /*
+             * Pixel 0
+             */
+
+            int c =
+                y0 - 16;
+
+
+            row[x * 3 + 0] =
+                clamp_rgb(
+                    (298 * c + 409 * e + 128) >> 8
+                );
+
+            row[x * 3 + 1] =
+                clamp_rgb(
+                    (298 * c - 100 * d - 208 * e + 128) >> 8
+                );
+
+            row[x * 3 + 2] =
+                clamp_rgb(
+                    (298 * c + 516 * d + 128) >> 8
+                );
+
+
+            /*
+             * Pixel 1
+             */
+
+            c =
+                y1 - 16;
+
+
+            row[(x + 1) * 3 + 0] =
+                clamp_rgb(
+                    (298 * c + 409 * e + 128) >> 8

@@ -98,42 +98,66 @@ static void http_handler(
 
     struct mg_http_message *hm =
         (struct mg_http_message *) ev_data;
-
 if (ntohs(c->loc.port) == 8080)
 {
     struct mg_str *host =
         mg_http_get_header(hm, "Host");
 
+    char host_buf[256];
+
     if (host != NULL)
     {
-        mg_printf(
-            c,
-            "HTTP/1.1 301 Moved Permanently\r\n"
-            "Location: https://%.*s:8443%.*s\r\n"
-            "Content-Length: 0\r\n"
-            "\r\n",
-            (int) host->len,
+        size_t len = host->len;
+
+        if (len >= sizeof(host_buf))
+            len = sizeof(host_buf) - 1;
+
+        memcpy(
+            host_buf,
             host->buf,
-            (int) hm->uri.len,
-            hm->uri.buf
+            len
         );
+
+        host_buf[len] = '\0';
+
+        /*
+         * Remove the HTTP port.
+         *
+         * Example:
+         *
+         * 192.168.1.200:8080
+         *
+         * becomes:
+         *
+         * 192.168.1.200
+         */
+        char *colon =
+            strrchr(host_buf, ':');
+
+        if (colon != NULL)
+            *colon = '\0';
     }
     else
     {
-        mg_printf(
-            c,
-            "HTTP/1.1 301 Moved Permanently\r\n"
-            "Location: https://127.0.0.1:8443%.*s\r\n"
-            "Content-Length: 0\r\n"
-            "\r\n",
-            (int) hm->uri.len,
-            hm->uri.buf
+        strcpy(
+            host_buf,
+            "127.0.0.1"
         );
     }
 
+    mg_printf(
+        c,
+        "HTTP/1.1 301 Moved Permanently\r\n"
+        "Location: https://%s:8443%.*s\r\n"
+        "Content-Length: 0\r\n"
+        "\r\n",
+        host_buf,
+        (int)hm->uri.len,
+        hm->uri.buf
+    );
+
     return;
 }
-
 
     /*
      * Dashboard

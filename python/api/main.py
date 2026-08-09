@@ -24,7 +24,7 @@ from fastapi.openapi.docs import get_swagger_ui_html
 # Load C shared library
 # --------------------------------------------------
 
-LIB_PATH = "/root/guard-system/build/libguard_api.so"
+LIB_PATH = "/opt/guard-system/build/libguard_api.so"
 
 lib = ctypes.CDLL(LIB_PATH)
 
@@ -271,7 +271,7 @@ def get_history():
 )
 def get_stream(request: Request):
 
-    upstream_url = "https://127.0.0.1/stream"
+    upstream_url = "https://127.0.0.1:8443/stream"
 
     # --------------------------------------------------
     # Swagger UI sends:

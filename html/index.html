@@ -117,44 +117,101 @@
 
 </div>
 
-
 <script>
 
-/*
- * Update system telemetry
- */
 function updateTelemetry()
 {
     fetch("/telemetry")
-        .then(response => response.json())
-        .then(data => {
+        .then(response =>
+        {
+            if (!response.ok)
+            {
+                throw new Error(
+                    "Telemetry HTTP error: " +
+                    response.status
+                );
+            }
 
-            document.getElementById("cpu-temp").textContent =
-                data.temperature.toFixed(2) + " °C";
-
-            document.getElementById("free-memory").textContent =
-    		(data.memory / (1024 * 1024)).toFixed(2) + " MB";
-
-            document.getElementById("cpu-usage").textContent =
-                data.cpu.toFixed(2) + " %";
-
+            return response.json();
         })
-        .catch(error => {
-            console.error("Telemetry error:", error);
+        .then(data =>
+        {
+            document.getElementById(
+                "cpu-temp"
+            ).textContent =
+                Number(data.temperature).toFixed(2) + " °C";
+
+            document.getElementById(
+                "free-memory"
+            ).textContent =
+                (Number(data.memory) / (1024 * 1024)).toFixed(2)
+                + " MB";
+
+            document.getElementById(
+                "cpu-usage"
+            ).textContent =
+                Number(data.cpu).toFixed(2) + " %";
+        })
+        .catch(error =>
+        {
+            console.error(
+                "Telemetry error:",
+                error
+            );
+        });
+}
+
+function updatePersons()
+{
+    fetch("/persons")
+        .then(response =>
+        {
+            if (!response.ok)
+            {
+                throw new Error(
+                    "Persons HTTP error: " +
+                    response.status
+                );
+            }
+
+            return response.json();
+        })
+        .then(data =>
+        {
+            document.getElementById(
+                "person-count"
+            ).textContent =
+                data.person_count;
+        })
+        .catch(error =>
+        {
+            console.error(
+                "Person detection error:",
+                error
+            );
         });
 }
 
 
 /*
- * Get telemetry immediately
+ * Initial update
  */
 updateTelemetry();
+updatePersons();
 
 
 /*
- * Update telemetry every 2 seconds
+ * Update every 2 seconds
  */
-setInterval(updateTelemetry, 2000);
+setInterval(
+    updateTelemetry,
+    2000
+);
+
+setInterval(
+    updatePersons,
+    2000
+);
 
 </script>
 
