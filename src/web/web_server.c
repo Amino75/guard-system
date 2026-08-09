@@ -79,7 +79,7 @@ static void http_handler(
 {
     if (ev == MG_EV_ACCEPT)
 {
-    if (ntohs(c->loc.port) == 443)
+    if (ntohs(c->loc.port) == 8443)
     {
         struct mg_tls_opts opts =
         {
@@ -99,7 +99,7 @@ static void http_handler(
     struct mg_http_message *hm =
         (struct mg_http_message *) ev_data;
 
-if (ntohs(c->loc.port) == 80)
+if (ntohs(c->loc.port) == 8080)
 {
     struct mg_str *host =
         mg_http_get_header(hm, "Host");
@@ -109,7 +109,7 @@ if (ntohs(c->loc.port) == 80)
         mg_printf(
             c,
             "HTTP/1.1 301 Moved Permanently\r\n"
-            "Location: https://%.*s%.*s\r\n"
+            "Location: https://%.*s:8443%.*s\r\n"
             "Content-Length: 0\r\n"
             "\r\n",
             (int) host->len,
@@ -123,7 +123,7 @@ if (ntohs(c->loc.port) == 80)
         mg_printf(
             c,
             "HTTP/1.1 301 Moved Permanently\r\n"
-            "Location: https://127.0.0.1%.*s\r\n"
+            "Location: https://127.0.0.1:8443%.*s\r\n"
             "Content-Length: 0\r\n"
             "\r\n",
             (int) hm->uri.len,
@@ -336,18 +336,19 @@ if(mg_match(
  */
 int web_server_init(void)
 {
+    mg_mgr_init(&mgr);
 
-    mg_mgr_init(
-        &mgr
-    );
+    ssl_cert =
+        read_file("cert/server.crt");
 
-
-    ssl_cert = read_file("cert/server.crt");
-    ssl_key = read_file("cert/server.key");
+    ssl_key =
+        read_file("cert/server.key");
 
     if (ssl_cert == NULL || ssl_key == NULL)
     {
-        printf("SSL certificate or key could not be loaded\n");
+        printf(
+            "SSL certificate or key could not be loaded\n"
+        );
 
         free(ssl_cert);
         free(ssl_key);
@@ -360,68 +361,93 @@ int web_server_init(void)
         return -1;
     }
 
-    printf("SSL certificate and key loaded\n");
+    printf(
+        "SSL certificate and key loaded\n"
+    );
 
+
+    /*
+     * HTTP server
+     *
+     * Port 8080 is used instead of port 80
+     * so the service does not require a
+     * privileged port.
+     *
+     * HTTP requests are redirected to HTTPS.
+     */
     struct mg_connection *http_connection =
-    mg_http_listen(
-        &mgr,
-        "http://0.0.0.0:80",
-        http_handler,
-        NULL
-    );
+        mg_http_listen(
+            &mgr,
+            "http://0.0.0.0:8080",
+            http_handler,
+            NULL
+        );
 
-if (http_connection == NULL)
-{
-    printf("HTTP server failed\n");
 
-    free(ssl_cert);
-    free(ssl_key);
+    if (http_connection == NULL)
+    {
+        printf(
+            "HTTP server failed\n"
+        );
 
-    ssl_cert = NULL;
-    ssl_key = NULL;
+        free(ssl_cert);
+        free(ssl_key);
 
-    mg_mgr_free(&mgr);
+        ssl_cert = NULL;
+        ssl_key = NULL;
 
-    return -1;
-}
+        mg_mgr_free(&mgr);
 
-struct mg_connection *https_connection =
-    mg_http_listen(
-        &mgr,
-        "https://0.0.0.0:443",
-        http_handler,
-        NULL
-    );
+        return -1;
+    }
 
-if (https_connection == NULL)
-{
-    printf("HTTPS server failed\n");
 
-    free(ssl_cert);
-    free(ssl_key);
+    /*
+     * HTTPS server
+     *
+     * This is the main Guard System server.
+     */
+    struct mg_connection *https_connection =
+        mg_http_listen(
+            &mgr,
+            "https://0.0.0.0:8443",
+            http_handler,
+            NULL
+        );
 
-    ssl_cert = NULL;
-    ssl_key = NULL;
 
-    mg_mgr_free(&mgr);
+    if (https_connection == NULL)
+    {
+        printf(
+            "HTTPS server failed\n"
+        );
 
-    return -1;
-}
+        free(ssl_cert);
+        free(ssl_key);
+
+        ssl_cert = NULL;
+        ssl_key = NULL;
+
+        mg_mgr_free(&mgr);
+
+        return -1;
+    }
 
 
     initialized = 1;
 
-printf(
-    "HTTP server started on port 80\n"
-);
 
-printf(
-    "HTTPS server started on port 443\n"
-);
+    printf(
+        "HTTP server started on port 8080\n"
+    );
+
+    printf(
+        "HTTPS server started on port 8443\n"
+    );
+
 
     return 0;
 }
-
 
 void web_server_poll(void)
 {

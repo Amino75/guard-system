@@ -1,0 +1,122 @@
+import time
+
+import cv2
+import numpy as np
+
+from detector import PersonDetector
+from shared_memory import SharedMemory
+
+
+DETECTION_INTERVAL = 10
+
+
+def yuyv_to_bgr(data):
+    yuyv = np.frombuffer(
+        data,
+        dtype=np.uint8
+    )
+
+    yuyv = yuyv.reshape(
+        (480, 640, 2)
+    )
+
+    return cv2.cvtColor(
+        yuyv,
+        cv2.COLOR_YUV2BGR_YUY2
+    )
+
+
+def main():
+
+    print("Starting vision system...")
+
+    shm = SharedMemory()
+    shm.open()
+
+    print(
+        "Shared memory opened successfully"
+    )
+
+    detector = PersonDetector()
+
+    print(
+        "Person detector ready"
+    )
+
+    frame_count = 0
+    person_count = 0
+
+    start_time = time.time()
+
+    last_frame_sequence = None
+
+    try:
+
+        while True:
+
+            frame_data = shm.read_frame()
+
+            if frame_data is None:
+                time.sleep(0.001)
+                continue
+
+            frame_count += 1
+
+            if frame_count % DETECTION_INTERVAL == 0:
+
+                start = time.time()
+
+                frame = yuyv_to_bgr(
+                    frame_data
+                )
+
+                person_count = (
+                    detector.detect(frame)
+                )
+
+                elapsed = (
+                    time.time() - start
+                )
+
+                shm.set_person_count(
+                    person_count
+                )
+
+                print(
+                    "MobileNet-SSD inference: "
+                    f"{elapsed * 1000:.1f} ms | "
+                    f"Persons: {person_count}"
+                )
+
+            if frame_count % 30 == 0:
+
+                elapsed = (
+                    time.time() - start_time
+                )
+
+                fps = (
+                    frame_count / elapsed
+                )
+
+                print(
+                    f"Vision FPS: {fps:.2f} | "
+                    f"Persons: {person_count}"
+                )
+
+    except KeyboardInterrupt:
+
+        print(
+            "\nStopping vision system..."
+        )
+
+    finally:
+
+        shm.close()
+
+        print(
+            "Shared memory closed"
+        )
+
+
+if __name__ == "__main__":
+    main()

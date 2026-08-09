@@ -1,5 +1,5 @@
 #include "camera/camera.h"
-
+#include "shared_memory/shared_memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +32,8 @@ static int jpeg_quality = 80;
 static unsigned char *last_jpeg = NULL;
 static size_t last_jpeg_size = 0;
 static uint64_t frame_id = 0;
+
+static telemetry_t *shared_data = NULL;
 
 /*
  * V4L2 ioctl wrapper
@@ -433,11 +435,54 @@ int camera_init(void)
 
 
     printf(
-        "Camera started\n"
+    "Camera started\n"
+);
+
+
+/*
+ * Get shared-memory pointer.
+ *
+ * The application initializes shared memory
+ * before initializing the camera.
+ */
+shared_data = shm_get();
+
+if (shared_data == NULL)
+{
+    fprintf(
+        stderr,
+        "Camera: shared memory is not available\n"
     );
 
+    camera_stop();
 
-    return 0;
+    return -1;
+}
+
+
+/*
+ * Initialize raw-frame metadata.
+ */
+shared_data->frame_width =
+    (uint32_t)width;
+
+shared_data->frame_height =
+    (uint32_t)height;
+
+shared_data->frame_size =
+    (uint32_t)(width * height * 2);
+
+shared_data->frame_sequence = 0;
+
+
+printf(
+    "Camera shared-memory frame: %dx%d YUYV (%u bytes)\n",
+    shared_data->frame_width,
+    shared_data->frame_height,
+    shared_data->frame_size
+);
+
+return 0;
 }
 
 
@@ -678,6 +723,28 @@ int camera_capture(void)
     unsigned long jpeg_size =
         0;
 
+
+/*
+ * Publish the raw YUYV frame to shared memory.
+ *
+ * Odd sequence number = frame is being written.
+ * Even sequence number = frame is complete.
+ */
+if (shared_data != NULL)
+{
+    shared_data->frame_sequence++;
+
+    memcpy(
+        shared_data->frame_yuyv,
+        buffers[buf.index].start,
+        CAMERA_FRAME_BYTES
+    );
+
+    shared_data->frame_size =
+        CAMERA_FRAME_BYTES;
+
+    shared_data->frame_sequence++;
+}
 
     yuyv_to_jpeg(
         buffers[buf.index].start,

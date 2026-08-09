@@ -1,91 +1,175 @@
 import time
 
 from config import Config
-from camera import Camera
-from jpeg_writer import JpegWriter
 from detector import PersonDetector
+from shared_memory import SharedMemoryReader
 
 
 def main():
 
-    config = Config("configs/settings.json")
+    print("========================================")
+    print("Guard System Vision")
+    print("========================================")
 
-    camera = Camera(config.camera())
 
-    vision = config.vision()
-
-    detector = PersonDetector()
-
-    writer = JpegWriter(
-        vision.jpeg_path,
-        vision.jpeg_quality
+    config = Config(
+        "configs/settings.json"
     )
 
 
-    camera.open()
+    detection = config.detection()
 
-    print("Camera opened successfully")
 
-    frame_count = 0
-    start_time = time.time()
+    print(
+        f"Detection enabled: {detection.enabled}"
+    )
 
-    person_count = 0
+    print(
+        f"Detection interval: "
+        f"{detection.interval} frames"
+    )
 
-    DETECTION_INTERVAL = 10
+    print(
+        f"Detection confidence: "
+        f"{detection.confidence:.2f}"
+    )
+
+
+    shm = SharedMemoryReader()
 
 
     try:
 
+        shm.open()
+
+
+        detector = None
+
+
+        if detection.enabled:
+
+            detector = PersonDetector(detection.confidence)
+
+        else:
+
+            print(
+                "Person detection is DISABLED"
+            )
+
+
+        last_sequence = None
+
+        frame_count = 0
+
+        detection_count = 0
+
+        person_count = 0
+
+        start_time = time.time()
+
+
+        print(
+            "Vision system started"
+        )
+
+
         while True:
 
-            frame = camera.read()
+            frame, sequence = shm.read_frame()
+
+
+            if frame is None:
+
+                time.sleep(0.005)
+
+                continue
+
+
+            # Ignore the same camera frame.
+            if sequence == last_sequence:
+
+                time.sleep(0.002)
+
+                continue
+
+
+            last_sequence = sequence
 
             frame_count += 1
 
 
-        # Run YOLO only every N frames
-            if frame_count % DETECTION_INTERVAL == 0:
+            if (
+                detection.enabled
+                and detector is not None
+                and frame_count % detection.interval == 0
+            ):
 
                 start = time.time()
 
-                person_count = detector.detect(frame)
+
+                person_count = detector.detect(
+                    frame
+                )
+
 
                 end = time.time()
 
+
+                detection_count += 1
+
+
+                shm.set_person_count(
+                    person_count
+                )
+
+
                 print(
-                    f"MobileNet-SSD inference: {(end-start)*1000:.1f} ms | "
+                    f"MobileNet-SSD inference: "
+                    f"{(end - start) * 1000:.1f} ms | "
                     f"Persons: {person_count}"
                 )
 
 
-        # Always update image
-            writer.save(frame)
+            elif not detection.enabled:
 
+                person_count = 0
+
+                shm.set_person_count(
+                    0
+                )
 
 
             if frame_count % 30 == 0:
 
-                elapsed = time.time() - start_time
+                elapsed = (
+                    time.time() - start_time
+                )
 
-                fps = frame_count / elapsed
+                fps = (
+                    frame_count / elapsed
+                    if elapsed > 0
+                    else 0
+                )
+
 
                 print(
-                    f"Camera FPS: {fps:.2f} | "
+                    f"Vision FPS: {fps:.2f} | "
                     f"Persons: {person_count}"
                 )
 
 
     except KeyboardInterrupt:
 
-        print("\nStopping...")
+        print(
+            "\nStopping vision system..."
+        )
 
 
     finally:
 
-        camera.release()
-
-        print("Camera released")
+        shm.close()
 
 
 if __name__ == "__main__":
+
     main()
