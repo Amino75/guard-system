@@ -13,7 +13,7 @@
 #include "shared_memory/shared_memory.h"
 #include "utils/utils.h"
 #include "web/web_server.h"
-#include "email/email.h"
+
 static volatile sig_atomic_t running = 1;
 
 

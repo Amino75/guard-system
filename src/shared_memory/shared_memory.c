@@ -70,6 +70,7 @@ int shm_init(void)
         0,
         sizeof(telemetry_t)
     );
+   shared_data->guard_mode = false;
 
 
 

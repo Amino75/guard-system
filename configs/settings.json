@@ -2,7 +2,8 @@
     "application":
     {
         "name": "Guard System",
-        "version": "1.0"
+        "version": "1.0",
+        "studentID": 404211106
     },
 
     "logging":
@@ -16,12 +17,6 @@
         "port": 8443
     },
 
-    "mqtt":
-    {
-        "host": "localhost",
-        "port": 1883
-    },
-
     "vision": {
         "jpeg_path": "html/live/latest.jpg",
         "jpeg_quality": 90
@@ -29,7 +24,7 @@
     "detection": {
         "enabled": true,
         "interval": 10,
-        "confidence": 0.5
+        "confidence": 0.4
     },    
     "camera": {
         "device": 1,
@@ -37,6 +32,13 @@
         "height": 480,
         "fps": 30
     },
+"mqtt":
+{
+    "host": "192.168.1.100",
+    "port": 1883,
+    "username": "guard",
+    "password": "emb"
+},
     "email": {
         "enabled": true,
         "smtp_host": "smtp.gmail.com",
@@ -45,4 +47,5 @@
         "password": "easl nlho szrq frez",
         "recipient": "amin.feizi751381@gmail.com"
     }
+
 }

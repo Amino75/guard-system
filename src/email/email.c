@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include "common/config.h"
 static CURL *curl = NULL;
 
 static const char *smtp_host = NULL;
@@ -193,13 +193,14 @@ struct curl_slist *headers = NULL;
      * Subject.
      */
 
-    snprintf(
-        subject,
-        sizeof(subject),
-        "Guard System Alert - %u person%s detected",
-        person_count,
-        person_count == 1 ? "" : "s"
-    );
+    int student_id = config_get_int("application.studentID");
+
+snprintf(
+    subject,
+    sizeof(subject),
+    "alarm/%d/home",
+    student_id
+);
 
 
     /*

@@ -5,7 +5,8 @@ from ctypes import (
     c_uint64,
     c_char,
     POINTER,
-    Structure
+    Structure,
+    c_bool
 )
 
 import threading
@@ -89,6 +90,18 @@ lib.guard_api_get_stream_path.argtypes = [
 ]
 
 lib.guard_api_get_stream_path.restype = ctypes.c_int
+
+lib.guard_api_set_guard_mode.argtypes = [
+    c_bool
+]
+
+lib.guard_api_set_guard_mode.restype = ctypes.c_int
+
+lib.guard_api_get_guard_mode.argtypes = [
+    POINTER(c_bool)
+]
+
+lib.guard_api_get_guard_mode.restype = ctypes.c_int
 
 
 # --------------------------------------------------
@@ -381,14 +394,12 @@ def get_stream(request: Request):
         )
     )
 
-
 # --------------------------------------------------
 # COMMAND
 # --------------------------------------------------
 
 reboot_lock = threading.Lock()
 reboot_scheduled = False
-
 
 @app.post(
     "/API/V1/COMMAND",
@@ -401,47 +412,116 @@ def execute_command(command: dict):
     cmd = command.get("cmd")
 
     # --------------------------------------------------
-    # Validate command
+    # GUARD MODE ON
     # --------------------------------------------------
 
-    if cmd != "reboot":
+    if cmd == "guard_on":
 
-        raise HTTPException(
-            status_code=400,
-            detail="Unsupported command"
+        result = lib.guard_api_set_guard_mode(
+            True
         )
 
-    # --------------------------------------------------
-    # Prevent duplicate reboot scheduling
-    # --------------------------------------------------
-
-    with reboot_lock:
-
-        if reboot_scheduled:
-
+        if result != 0:
             raise HTTPException(
-                status_code=409,
-                detail="Reboot already scheduled"
+                status_code=500,
+                detail="Unable to enable Guard Mode"
             )
 
-        reboot_scheduled = True
+        return {
+            "command": "guard_on",
+            "guard_mode": True,
+            "status": "accepted"
+        }
 
     # --------------------------------------------------
-    # Give FastAPI enough time to send the response
-    # before rebooting the Orange Pi.
+    # GUARD MODE OFF
     # --------------------------------------------------
 
-    subprocess.Popen(
-        [
-            "/bin/sh",
-            "-c",
-            "sleep 2; /bin/systemctl reboot"
-        ],
-        start_new_session=True
+    if cmd == "guard_off":
+
+        result = lib.guard_api_set_guard_mode(
+            False
+        )
+
+        if result != 0:
+            raise HTTPException(
+                status_code=500,
+                detail="Unable to disable Guard Mode"
+            )
+
+        return {
+            "command": "guard_off",
+            "guard_mode": False,
+            "status": "accepted"
+        }
+
+    # --------------------------------------------------
+    # REBOOT
+    # --------------------------------------------------
+
+    if cmd == "reboot":
+
+        # Prevent duplicate reboot scheduling
+
+        with reboot_lock:
+
+            if reboot_scheduled:
+
+                raise HTTPException(
+                    status_code=409,
+                    detail="Reboot already scheduled"
+                )
+
+            reboot_scheduled = True
+
+        # Give FastAPI enough time to send
+        # the response before rebooting.
+
+        subprocess.Popen(
+            [
+                "/bin/sh",
+                "-c",
+                "sleep 2; /bin/systemctl reboot"
+            ],
+            start_new_session=True
+        )
+
+        return {
+            "command": "reboot",
+            "status": "accepted"
+        }
+
+    # --------------------------------------------------
+    # UNKNOWN COMMAND
+    # --------------------------------------------------
+
+    raise HTTPException(
+        status_code=400,
+        detail="Unsupported command"
     )
 
-    return {
-        "command": "reboot",
-        "status": "accepted"
-    }
+# --------------------------------------------------
+# GUARD MODE STATUS
+# --------------------------------------------------
 
+@app.get(
+    "/API/V1/GUARD",
+    summary="Get Guard Mode"
+)
+def get_guard_mode():
+
+    enabled = c_bool(False)
+
+    result = lib.guard_api_get_guard_mode(
+        ctypes.byref(enabled)
+    )
+
+    if result != 0:
+        raise HTTPException(
+            status_code=500,
+            detail="Guard Mode unavailable"
+        )
+
+    return {
+        "guard_mode": bool(enabled.value)
+    }

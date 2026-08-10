@@ -825,20 +825,22 @@ int camera_capture(void)
  */
 if (shared_data != NULL)
 {
+    uint32_t current_frame_size =
+        (uint32_t)(width * height * 2);
+
     shared_data->frame_sequence++;
 
     memcpy(
         shared_data->frame_yuyv,
         buffers[buf.index].start,
-        CAMERA_FRAME_BYTES
+        current_frame_size
     );
 
     shared_data->frame_size =
-        CAMERA_FRAME_BYTES;
+        current_frame_size;
 
     shared_data->frame_sequence++;
 }
-
 
 /*
  * Take a stable snapshot of Python detections.
@@ -934,7 +936,10 @@ if (new_jpeg != NULL)
  * The JPEG attached to the email is the same
  * freshly generated JPEG used by the live stream.
  */
-if (detection_count > 0)
+if (detection_count > 0 &&
+    shared_data != NULL &&
+    shared_data->guard_mode
+)
 {
     time_t email_now =
         time(NULL);

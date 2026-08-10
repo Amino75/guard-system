@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
+#include "common/config.h"
 #include "cJSON.h"
 
 #define MQTT_HOST "192.168.1.100"
@@ -221,17 +221,31 @@ static int mqtt_publish_json(
 
 /*
  * Initialize MQTT client.
+ *
+ * MQTT is optional. Failure to connect to the broker
+ * must never prevent the Guard System from starting.
+ *
+ * The network loop runs in a background thread and
+ * automatically handles reconnect attempts.
  */
 int mqtt_init(void)
 {
     int result;
+const char *mqtt_host =
+    config_get_string("mqtt.host");
 
+int mqtt_port =
+    config_get_int("mqtt.port");
 
+const char *mqtt_username =
+    config_get_string("mqtt.username");
+
+const char *mqtt_password =
+    config_get_string("mqtt.password");
     /*
      * Initialize libmosquitto.
      */
-    result =
-        mosquitto_lib_init();
+    result = mosquitto_lib_init();
 
     if (result != MOSQ_ERR_SUCCESS)
     {
@@ -241,15 +255,15 @@ int mqtt_init(void)
             mosquitto_strerror(result)
         );
 
-        return -1;
+        /*
+         * MQTT is optional.
+         * Do not abort the application.
+         */
+        return 0;
     }
-
 
     /*
      * Create MQTT client.
-     *
-     * MQTT v3.1.1 is used because the installed
-     * libmosquitto version supports it reliably.
      */
     mqtt_client =
         mosquitto_new(
@@ -257,6 +271,13 @@ int mqtt_init(void)
             true,
             NULL
         );
+result =
+    mosquitto_username_pw_set(
+        mqtt_client,
+        mqtt_username,
+        mqtt_password
+    );
+
 
     if (mqtt_client == NULL)
     {
@@ -267,10 +288,33 @@ int mqtt_init(void)
 
         mosquitto_lib_cleanup();
 
-        return -1;
+        /*
+         * MQTT is optional.
+         */
+        return 0;
     }
+result =
+    mosquitto_username_pw_set(
+        mqtt_client,
+        mqtt_username,
+        mqtt_password
+    );
 
+if (result != MOSQ_ERR_SUCCESS)
+{
+    fprintf(
+        stderr,
+        "MQTT authentication setup failed: %s\n",
+        mosquitto_strerror(result)
+    );
 
+    mosquitto_destroy(mqtt_client);
+    mqtt_client = NULL;
+
+    mosquitto_lib_cleanup();
+
+    return -1;
+}
     /*
      * Register callbacks.
      */
@@ -284,13 +328,8 @@ int mqtt_init(void)
         mqtt_on_disconnect
     );
 
-
     /*
      * Configure Last Will and Testament.
-     *
-     * If the board loses power, crashes, or the
-     * MQTT connection disappears unexpectedly,
-     * Mosquitto will publish this retained message.
      */
     const char *offline_message =
         "{\"status\":\"offline\"}";
@@ -318,43 +357,19 @@ int mqtt_init(void)
 
         mosquitto_lib_cleanup();
 
-        return -1;
+        /*
+         * MQTT is optional.
+         */
+        return 0;
     }
 
-
     /*
-     * Connect to the broker.
-     */
-    result =
-        mosquitto_connect(
-            mqtt_client,
-            MQTT_HOST,
-            MQTT_PORT,
-            60
-        );
-
-    if (result != MOSQ_ERR_SUCCESS)
-    {
-        fprintf(
-            stderr,
-            "MQTT connection failed: %s\n",
-            mosquitto_strerror(result)
-        );
-
-        mosquitto_destroy(mqtt_client);
-        mqtt_client = NULL;
-
-        mosquitto_lib_cleanup();
-
-        return -1;
-    }
-
-
-    /*
-     * Start the MQTT network loop in its own thread.
+     * Start MQTT network loop FIRST.
      *
-     * This prevents MQTT network activity from
-     * blocking the camera capture loop.
+     * This creates the background network thread.
+     * It also allows Mosquitto to perform automatic
+     * reconnect attempts without blocking the main
+     * application.
      */
     result =
         mosquitto_loop_start(
@@ -369,21 +384,67 @@ int mqtt_init(void)
             mosquitto_strerror(result)
         );
 
-        mosquitto_disconnect(
-            mqtt_client
-        );
-
-        mosquitto_destroy(
-            mqtt_client
-        );
-
+        mosquitto_destroy(mqtt_client);
         mqtt_client = NULL;
 
         mosquitto_lib_cleanup();
 
-        return -1;
+        /*
+         * MQTT is optional.
+         */
+        return 0;
     }
 
+    /*
+     * Request connection asynchronously.
+     *
+     * IMPORTANT:
+     * Do NOT use mosquitto_connect() here.
+     *
+     * mosquitto_connect() can block while waiting for
+     * an unreachable broker.
+     *
+     * mosquitto_connect_async() returns immediately.
+     */
+    result =
+        mosquitto_connect_async(
+            mqtt_client,
+            mqtt_host,
+            mqtt_port,
+            60
+        );
+
+    if (result != MOSQ_ERR_SUCCESS)
+    {
+        fprintf(
+            stderr,
+            "MQTT asynchronous connection failed: %s\n",
+            mosquitto_strerror(result)
+        );
+
+        /*
+         * Keep the MQTT client alive.
+         *
+         * The background loop can continue handling
+         * reconnect attempts.
+         */
+        mqtt_connected = false;
+
+        return 0;
+    }
+
+    /*
+     * MQTT initialization succeeded.
+     *
+     * The actual broker connection may happen later
+     * through mqtt_on_connect().
+     */
+    printf(
+        "MQTT subsystem initialized "
+        "(broker %s:%d)\n",
+        MQTT_HOST,
+        MQTT_PORT
+    );
 
     return 0;
 }

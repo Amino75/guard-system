@@ -227,3 +227,99 @@ int guard_api_get_stream_path(
 
     return 0;
 }
+
+int guard_api_set_guard_mode(
+    bool enabled
+)
+{
+    int fd =
+        shm_open(
+            SHM_NAME,
+            O_RDWR,
+            0
+        );
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    telemetry_t *data =
+        mmap(
+            NULL,
+            sizeof(telemetry_t),
+            PROT_READ | PROT_WRITE,
+            MAP_SHARED,
+            fd,
+            0
+        );
+
+    if (data == MAP_FAILED)
+    {
+        close(fd);
+        return -1;
+    }
+
+    data->guard_mode = enabled;
+
+    munmap(
+        data,
+        sizeof(telemetry_t)
+    );
+
+    close(fd);
+
+    return 0;
+}
+
+
+int guard_api_get_guard_mode(
+    bool *enabled
+)
+{
+    if (enabled == NULL)
+    {
+        return -1;
+    }
+
+    int fd =
+        shm_open(
+            SHM_NAME,
+            O_RDONLY,
+            0
+        );
+
+    if (fd < 0)
+    {
+        return -1;
+    }
+
+    telemetry_t *data =
+        mmap(
+            NULL,
+            sizeof(telemetry_t),
+            PROT_READ,
+            MAP_SHARED,
+            fd,
+            0
+        );
+
+    if (data == MAP_FAILED)
+    {
+        close(fd);
+        return -1;
+    }
+
+    *enabled =
+        data->guard_mode;
+
+    munmap(
+        data,
+        sizeof(telemetry_t)
+    );
+
+    close(fd);
+
+    return 0;
+}
+

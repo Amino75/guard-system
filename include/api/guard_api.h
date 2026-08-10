@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include <stdbool.h>
 /*
  * Telemetry returned by the C API.
  */
@@ -65,4 +66,30 @@ int guard_api_get_stream_path(
     char *buffer,
     uint32_t buffer_size
 );
+
+/*
+ * Set Guard Mode.
+ *
+ * enabled = true  -> Guard Mode ON
+ * enabled = false -> Guard Mode OFF
+ *
+ * Returns:
+ *  0  success
+ * -1  failure
+ */
+int guard_api_set_guard_mode(
+    bool enabled
+);
+
+/*
+ * Get current Guard Mode.
+ *
+ * Returns:
+ *  0  success
+ * -1  failure
+ */
+int guard_api_get_guard_mode(
+    bool *enabled
+);
+
 #endif
