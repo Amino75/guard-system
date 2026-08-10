@@ -1,17 +1,19 @@
 #include "application/application.h"
 #include "history/history.h"
 #include "camera/camera.h"
-
+#include "email/email.h"
 #include <signal.h>
 #include <stdio.h>
 #include <time.h>
 
+
+#include "mqtt/mqtt.h"
 #include "common/config.h"
 #include "common/logger.h"
 #include "shared_memory/shared_memory.h"
 #include "utils/utils.h"
 #include "web/web_server.h"
-
+#include "email/email.h"
 static volatile sig_atomic_t running = 1;
 
 
@@ -68,7 +70,6 @@ int application_init(void)
 
         return -1;
     }
-
 
     /*
      * Initialize web server.
@@ -129,6 +130,33 @@ if (history_init() != 0)
         signal_handler
     );
 
+
+/*
+ * Initialize email subsystem.
+ */
+
+if (email_init() != 0)
+{
+    log_error(
+        "Email initialization failed"
+    );
+
+    return -1;
+}
+
+
+/*
+ * Initialize MQTT.
+ */
+
+if (mqtt_init() != 0)
+{
+    log_error(
+        "MQTT initialization failed"
+    );
+
+    return -1;
+}
 
     /*
      * Initialize camera.
@@ -214,6 +242,41 @@ if (data != NULL)
         sizeof(data->timestamp)
     );
 
+    /*
+     * Publish current system state to MQTT.
+     *
+     * Both MQTT topics use the same current
+     * person count, CPU temperature and timestamp.
+     */
+    if (mqtt_is_connected())
+    {
+        if (
+            mqtt_publish_persons(
+                data->person_count,
+                data->timestamp,
+                data->cpu_temperature
+            ) != 0
+        )
+        {
+            log_error(
+                "MQTT persons publish failed"
+            );
+        }
+
+        if (
+            mqtt_publish_telemetry(
+                data->person_count,
+                data->timestamp,
+                data->cpu_temperature
+            ) != 0
+        )
+        {
+            log_error(
+                "MQTT telemetry publish failed"
+            );
+        }
+    }
+
 
     /*
      * Add current telemetry to history.
@@ -253,14 +316,14 @@ void application_shutdown(void)
 
 
     camera_stop();
-
+mqtt_cleanup();
 
     web_server_stop();
-
+email_cleanup();
 history_shutdown();
     shm_destroy();
 
-
+email_cleanup();
     config_unload();
 
 

@@ -36,5 +36,13 @@
         "width": 640,
         "height": 480,
         "fps": 30
+    },
+    "email": {
+        "enabled": true,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "username": "aminfeizishahri@gmail.com",
+        "password": "easl nlho szrq frez",
+        "recipient": "amin.feizi751381@gmail.com"
     }
 }

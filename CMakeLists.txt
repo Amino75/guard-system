@@ -22,6 +22,8 @@ add_executable(guard-system
     third_party/mongoose/mongoose.c
     src/camera/camera.c
     src/camera/overlay.c
+    src/email/email.c
+    src/mqtt/mqtt.c
 )
 
 target_include_directories(guard-system PRIVATE
@@ -45,6 +47,8 @@ target_link_libraries(guard-system
     OpenSSL::SSL
     OpenSSL::Crypto
     jpeg
+    curl
+    mosquitto
 )
 add_library(guard_api SHARED
 

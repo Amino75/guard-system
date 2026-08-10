@@ -12,6 +12,9 @@
 #include <jpeglib.h>
 #include <time.h>
 #include "common/config.h"
+#include "utils/utils.h"
+#include "email/email.h"
+#include "mqtt/mqtt.h"
 
 #define BUFFER_COUNT 4
 
@@ -34,6 +37,16 @@ static size_t last_jpeg_size = 0;
 
 
 static uint64_t frame_id = 0;
+
+/*
+ * Email alert debounce.
+ *
+ * Maximum one alert every 30 seconds.
+ */
+static time_t last_email_alert = 0;
+
+#define EMAIL_DEBOUNCE_SECONDS 30
+
 
 /*
  * Real stream FPS measurement.
@@ -911,6 +924,67 @@ if (new_jpeg != NULL)
      * New stream frame is now available.
      */
     frame_id++;
+
+
+/*
+ * Person detection email alert.
+ *
+ * Send at most one email every 30 seconds.
+ *
+ * The JPEG attached to the email is the same
+ * freshly generated JPEG used by the live stream.
+ */
+if (detection_count > 0)
+{
+    time_t email_now =
+        time(NULL);
+
+    if (
+        last_email_alert == 0 ||
+        difftime(
+            email_now,
+            last_email_alert
+        ) >= EMAIL_DEBOUNCE_SECONDS
+    )
+    {
+        telemetry_t *email_data =
+            shm_get();
+
+        double cpu_temperature = 0.0;
+
+        if (email_data != NULL)
+        {
+            cpu_temperature =
+                email_data->cpu_temperature;
+        }
+        else
+        {
+            cpu_temperature =
+                utils_get_cpu_temperature();
+        }
+
+        char email_timestamp[32];
+
+        utils_get_timestamp(
+            email_timestamp,
+            sizeof(email_timestamp)
+        );
+
+        if (
+            email_send_alert(
+                detection_count,
+                email_timestamp,
+                cpu_temperature,
+                last_jpeg,
+                last_jpeg_size
+            ) == 0
+        )
+        {
+            last_email_alert =
+                email_now;
+        }
+    }
+}
 
     /*
      * Measure actual stream FPS.
