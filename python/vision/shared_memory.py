@@ -18,6 +18,23 @@ PERSON_COUNT_OFFSET = 4
 
 MAX_FRAME_SIZE = 640 * 480 * 2
 
+MAX_DETECTIONS = 10
+
+
+DETECTION_SEQUENCE_OFFSET = (
+    FRAME_YUYV_OFFSET + MAX_FRAME_SIZE
+)
+
+DETECTION_COUNT_OFFSET = (
+    DETECTION_SEQUENCE_OFFSET + 4
+)
+
+DETECTIONS_OFFSET = (
+    DETECTION_COUNT_OFFSET + 4
+)
+
+DETECTION_SIZE = 20
+
 
 class SharedMemoryReader:
 
@@ -49,14 +66,20 @@ class SharedMemoryReader:
     def close(self):
 
         if self.mm is not None:
+
             self.mm.close()
+
             self.mm = None
 
         if self.fd is not None:
+
             self.fd.close()
+
             self.fd = None
 
-        print("Shared memory closed")
+        print(
+            "Shared memory closed"
+        )
 
     def _read_u32(self, offset):
 
@@ -75,6 +98,15 @@ class SharedMemoryReader:
             int(value)
         )
 
+    def _write_float(self, offset, value):
+
+        struct.pack_into(
+            "<f",
+            self.mm,
+            offset,
+            float(value)
+        )
+
     def get_person_count(self):
 
         return self._read_u32(
@@ -88,9 +120,118 @@ class SharedMemoryReader:
             count
         )
 
+    def set_detections(self, persons):
+
+        if self.mm is None:
+
+            raise RuntimeError(
+                "Shared memory is not opened"
+            )
+
+       
+        persons = persons[
+            :MAX_DETECTIONS
+        ]
+
+        
+        sequence = self._read_u32(
+            DETECTION_SEQUENCE_OFFSET
+        )
+
+        if sequence & 1:
+
+            sequence += 1
+
+        self._write_u32(
+            DETECTION_SEQUENCE_OFFSET,
+            sequence + 1
+        )
+
+        
+        self._write_u32(
+            DETECTION_COUNT_OFFSET,
+            len(persons)
+        )
+
+   
+        for i, person in enumerate(persons):
+
+            offset = (
+                DETECTIONS_OFFSET
+                + i * DETECTION_SIZE
+            )
+
+            self._write_u32(
+                offset,
+                person["x"]
+            )
+
+            self._write_u32(
+                offset + 4,
+                person["y"]
+            )
+
+            self._write_u32(
+                offset + 8,
+                person["width"]
+            )
+
+            self._write_u32(
+                offset + 12,
+                person["height"]
+            )
+
+            self._write_float(
+                offset + 16,
+                person["confidence"]
+            )
+
+        
+        for i in range(
+            len(persons),
+            MAX_DETECTIONS
+        ):
+
+            offset = (
+                DETECTIONS_OFFSET
+                + i * DETECTION_SIZE
+            )
+
+            self._write_u32(
+                offset,
+                0
+            )
+
+            self._write_u32(
+                offset + 4,
+                0
+            )
+
+            self._write_u32(
+                offset + 8,
+                0
+            )
+
+            self._write_u32(
+                offset + 12,
+                0
+            )
+
+            self._write_float(
+                offset + 16,
+                0.0
+            )
+
+       
+        self._write_u32(
+            DETECTION_SEQUENCE_OFFSET,
+            sequence + 2
+        )
+
     def read_frame(self):
 
         if self.mm is None:
+
             raise RuntimeError(
                 "Shared memory is not opened"
             )
@@ -103,7 +244,9 @@ class SharedMemoryReader:
 
             # Odd means C is currently writing.
             if sequence_before & 1:
+
                 time.sleep(0.001)
+
                 continue
 
             width = self._read_u32(
@@ -124,6 +267,7 @@ class SharedMemoryReader:
                 or size <= 0
                 or size > MAX_FRAME_SIZE
             ):
+
                 return None, sequence_before
 
             raw = self.mm[
@@ -135,11 +279,13 @@ class SharedMemoryReader:
                 FRAME_SEQUENCE_OFFSET
             )
 
-            # Frame changed while we were copying it.
+            # Frame changed while copying.
             if sequence_before != sequence_after:
+
                 continue
 
             if sequence_after & 1:
+
                 continue
 
             frame = np.frombuffer(
@@ -147,16 +293,19 @@ class SharedMemoryReader:
                 dtype=np.uint8
             ).copy()
 
-            expected_size = width * height * 2
+            expected_size = (
+                width * height * 2
+            )
 
             if frame.size != expected_size:
+
                 return None, sequence_after
 
             frame = frame.reshape(
                 (height, width, 2)
             )
 
-            # Convert C camera's YUYV frame to BGR
+            # Convert C camera YUYV → BGR.
             bgr = cv2.cvtColor(
                 frame,
                 cv2.COLOR_YUV2BGR_YUY2

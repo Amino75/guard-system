@@ -5,9 +5,11 @@ from detector import PersonDetector
 from shared_memory import SharedMemoryReader
 from pathlib import Path
 
+
 DETECTION_DISABLE_FILE = Path(
     "/tmp/guard-system-detection.disabled"
 )
+
 
 def main():
 
@@ -15,14 +17,11 @@ def main():
     print("Guard System Vision")
     print("========================================")
 
-
     config = Config(
         "configs/settings.json"
     )
 
-
     detection = config.detection()
-
 
     print(
         f"Detection enabled: {detection.enabled}"
@@ -38,21 +37,19 @@ def main():
         f"{detection.confidence:.2f}"
     )
 
-
     shm = SharedMemoryReader()
-
 
     try:
 
         shm.open()
 
-
         detector = None
-
 
         if detection.enabled:
 
-            detector = PersonDetector(detection.confidence)
+            detector = PersonDetector(
+                detection.confidence
+            )
 
         else:
 
@@ -60,34 +57,27 @@ def main():
                 "Person detection is DISABLED"
             )
 
-
         last_sequence = None
 
         frame_count = 0
-
         detection_count = 0
-
         person_count = 0
 
         start_time = time.time()
-
 
         print(
             "Vision system started"
         )
 
-
         while True:
 
             frame, sequence = shm.read_frame()
-
 
             if frame is None:
 
                 time.sleep(0.005)
 
                 continue
-
 
             # Ignore the same camera frame.
             if sequence == last_sequence:
@@ -96,11 +86,9 @@ def main():
 
                 continue
 
-
             last_sequence = sequence
 
             frame_count += 1
-
 
             detection_runtime_enabled = (
                 detection.enabled
@@ -110,9 +98,14 @@ def main():
             if frame_count % 30 == 0:
 
                 if detection_runtime_enabled:
-                    print("Detection state: ENABLED")
+                    print(
+                        "Detection state: ENABLED"
+                    )
+
                 else:
-                    print("Detection state: DISABLED")
+                    print(
+                        "Detection state: DISABLED"
+                    )
 
             if (
                 detection_runtime_enabled
@@ -122,22 +115,25 @@ def main():
 
                 start = time.time()
 
-
-                person_count = detector.detect(
+                persons = detector.detect(
                     frame
                 )
 
-
                 end = time.time()
-
 
                 detection_count += 1
 
+                person_count = len(
+                    persons
+                )
+
+                shm.set_detections(
+                    persons
+                )
 
                 shm.set_person_count(
                     person_count
                 )
-
 
                 print(
                     f"MobileNet-SSD inference: "
@@ -145,15 +141,17 @@ def main():
                     f"Persons: {person_count}"
                 )
 
-
             elif not detection_runtime_enabled:
 
                 person_count = 0
 
+                shm.set_detections(
+                    []
+                )
+
                 shm.set_person_count(
                     0
                 )
-
 
             if frame_count % 30 == 0:
 
@@ -167,19 +165,16 @@ def main():
                     else 0
                 )
 
-
                 print(
                     f"Vision FPS: {fps:.2f} | "
                     f"Persons: {person_count}"
                 )
-
 
     except KeyboardInterrupt:
 
         print(
             "\nStopping vision system..."
         )
-
 
     finally:
 

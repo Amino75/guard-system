@@ -8,9 +8,9 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <linux/videodev2.h>
-
+#include "camera/overlay.h"
 #include <jpeglib.h>
-
+#include <time.h>
 #include "common/config.h"
 
 #define BUFFER_COUNT 4
@@ -31,9 +31,74 @@ static int jpeg_quality = 80;
 
 static unsigned char *last_jpeg = NULL;
 static size_t last_jpeg_size = 0;
+
+
 static uint64_t frame_id = 0;
 
+/*
+ * Real stream FPS measurement.
+ *
+ * Counts successfully generated JPEG frames.
+ */
+static uint64_t stream_fps_frames = 0;
+static double stream_fps = 0.0;
+static struct timespec stream_fps_start;
+
 static telemetry_t *shared_data = NULL;
+
+
+
+
+static uint32_t camera_get_detections(
+    detection_box_t *out,
+    uint32_t max_count
+)
+{
+    if (shared_data == NULL || out == NULL)
+        return 0;
+
+    if (max_count > MAX_DETECTIONS)
+        max_count = MAX_DETECTIONS;
+
+    for (int attempt = 0; attempt < 10; attempt++)
+    {
+        uint32_t sequence_before =
+            shared_data->detection_sequence;
+
+        /*
+         * Odd sequence means Python is writing.
+         */
+        if (sequence_before & 1U)
+            continue;
+
+        uint32_t count =
+            shared_data->detection_count;
+
+        if (count > max_count)
+            count = max_count;
+
+        memcpy(
+            out,
+            shared_data->detections,
+            count * sizeof(detection_box_t)
+        );
+
+        uint32_t sequence_after =
+            shared_data->detection_sequence;
+
+        /*
+         * Accept only if the data did not change
+         * while we copied it.
+         */
+        if (sequence_before == sequence_after &&
+            !(sequence_after & 1U))
+        {
+            return count;
+        }
+    }
+
+    return 0;
+}
 
 /*
  * V4L2 ioctl wrapper
@@ -438,6 +503,14 @@ int camera_init(void)
     "Camera started\n"
 );
 
+clock_gettime(
+    CLOCK_MONOTONIC,
+    &stream_fps_start
+);
+
+stream_fps_frames = 0;
+stream_fps = 0.0;
+
 
 /*
  * Get shared-memory pointer.
@@ -730,6 +803,13 @@ int camera_capture(void)
  * Odd sequence number = frame is being written.
  * Even sequence number = frame is complete.
  */
+/*
+ * Publish the raw YUYV frame to shared memory.
+ *
+ * IMPORTANT:
+ * The raw frame is copied BEFORE drawing the overlay.
+ * Therefore Python always receives the original camera frame.
+ */
 if (shared_data != NULL)
 {
     shared_data->frame_sequence++;
@@ -746,32 +826,127 @@ if (shared_data != NULL)
     shared_data->frame_sequence++;
 }
 
-    yuyv_to_jpeg(
-        buffers[buf.index].start,
-        &new_jpeg,
-        &jpeg_size
+
+/*
+ * Take a stable snapshot of Python detections.
+ */
+detection_box_t detections[MAX_DETECTIONS];
+
+uint32_t detection_count =
+    camera_get_detections(
+        detections,
+        MAX_DETECTIONS
     );
 
+static unsigned int overlay_debug_counter = 0;
+
+overlay_debug_counter++;
+
+if (overlay_debug_counter >= 30)
+{
+    printf(
+        "C overlay: detection_count=%u\n",
+        detection_count
+    );
+
+    if (detection_count > 0)
+    {
+        printf(
+            "C overlay: box[0] x=%d y=%d w=%d h=%d conf=%.2f\n",
+            detections[0].x,
+            detections[0].y,
+            detections[0].width,
+            detections[0].height,
+            detections[0].confidence
+        );
+    }
+
+    overlay_debug_counter = 0;
+}
+
+/*
+ * Draw detections onto the camera buffer.
+ *
+ * This buffer is used for JPEG generation,
+ * so the overlay appears in the streamed image.
+ */
+
+    overlay_draw_detections(
+        buffers[buf.index].start,
+        width,
+        height,
+        detections,
+        detection_count,
+        "404211106",
+        camera_get_stream_fps()
+    );
+
+
+/*
+ * Convert the overlaid frame to JPEG.
+ */
+yuyv_to_jpeg(
+    buffers[buf.index].start,
+    &new_jpeg,
+    &jpeg_size
+);
 
     /*
      * Replace previous frame only after
      * successful JPEG creation.
      */
-    if (new_jpeg != NULL)
+     
+
+if (new_jpeg != NULL)
+{
+    free(last_jpeg);
+
+    last_jpeg =
+        new_jpeg;
+
+    last_jpeg_size =
+        (size_t)jpeg_size;
+
+    /*
+     * New stream frame is now available.
+     */
+    frame_id++;
+
+    /*
+     * Measure actual stream FPS.
+     *
+     * Only successfully generated JPEG
+     * frames are counted.
+     */
+    stream_fps_frames++;
+
+    struct timespec now;
+
+    clock_gettime(
+        CLOCK_MONOTONIC,
+        &now
+    );
+
+    double elapsed =
+        (double)(now.tv_sec - stream_fps_start.tv_sec) +
+        (double)(now.tv_nsec - stream_fps_start.tv_nsec) /
+        1000000000.0;
+
+    if (elapsed >= 1.0)
     {
-        free(last_jpeg);
+        stream_fps =
+            (double)stream_fps_frames / elapsed;
 
-        last_jpeg =
-            new_jpeg;
+        stream_fps_frames = 0;
 
-        last_jpeg_size =
-            (size_t)jpeg_size;
+        stream_fps_start = now;
 
-        /*
-         * New camera frame is now available.
-         */
-        frame_id++;
+        printf(
+            "Real stream FPS: %.2f\n",
+            stream_fps
+        );
     }
+}
 
 
     /*
@@ -798,6 +973,10 @@ uint64_t camera_get_frame_id(void)
     return frame_id;
 }
 
+double camera_get_stream_fps(void)
+{
+    return stream_fps;
+}
 
 /*
  * Get latest JPEG frame.

@@ -15,6 +15,8 @@ unsigned char *camera_get_jpeg(
 );
 uint64_t camera_get_frame_id(void);
 
+double camera_get_stream_fps(void);
+
 void camera_stop(void);
 
 

@@ -23,6 +23,27 @@
 #define CAMERA_FRAME_BYTES \
     (CAMERA_FRAME_WIDTH * CAMERA_FRAME_HEIGHT * 2)
 
+/*
+ * Maximum number of detected persons.
+ */
+#define MAX_DETECTIONS 10
+
+/*
+ * Bounding box produced by Python.
+ *
+ * Coordinates are relative to the
+ * camera frame.
+ */
+typedef struct
+{
+    int32_t x;
+    int32_t y;
+    int32_t width;
+    int32_t height;
+    float confidence;
+
+} detection_box_t;
+
 
 /*
  * Data exchanged between processes.
@@ -38,38 +59,30 @@ typedef struct
 
     float fps;
 
-
     /*
      * System information
      */
     float cpu_temperature;
 
-
     /*
      * Guard status
      */
     bool guard_mode;
-
     bool person_detected;
-
 
     /*
      * Metadata
      */
     char timestamp[MAX_TIMESTAMP_LENGTH];
-
     char jpeg_path[MAX_PATH_LENGTH];
-
 
     /*
      * Raw camera frame information.
      *
      * frame_sequence:
      *
-     * Even value  = stable frame
-     * Odd value   = C is currently writing frame
-     *
-     * Python can use this to safely copy the frame.
+     * Even value = stable frame
+     * Odd value  = C is currently writing frame
      */
     uint32_t frame_sequence;
 
@@ -79,17 +92,26 @@ typedef struct
 
     uint32_t frame_size;
 
-
     /*
      * Latest raw YUYV camera frame.
      *
-     * Format:
-     *     YUYV 4:2:2
-     *
-     * Size:
-     *     640 * 480 * 2 = 614400 bytes
+     * 640 * 480 * 2 = 614400 bytes
      */
     unsigned char frame_yuyv[CAMERA_FRAME_BYTES];
+
+    /*
+     * Detection data.
+     *
+     * detection_sequence:
+     *
+     * Even value = stable detection data
+     * Odd value  = Python is currently writing
+     */
+    uint32_t detection_sequence;
+
+    uint32_t detection_count;
+
+    detection_box_t detections[MAX_DETECTIONS];
 
 } telemetry_t;
 
@@ -110,6 +132,5 @@ telemetry_t *shm_get(void);
  * Cleanup shared memory.
  */
 void shm_destroy(void);
-
 
 #endif

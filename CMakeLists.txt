@@ -21,6 +21,7 @@ add_executable(guard-system
     third_party/cJSON/cJSON.c
     third_party/mongoose/mongoose.c
     src/camera/camera.c
+    src/camera/overlay.c
 )
 
 target_include_directories(guard-system PRIVATE

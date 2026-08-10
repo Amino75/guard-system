@@ -84,11 +84,8 @@ telemetry_t *shm_get(void)
 }
 
 
-
-
 void shm_destroy(void)
 {
-
     if(shared_data != NULL)
     {
         munmap(
@@ -99,21 +96,14 @@ void shm_destroy(void)
         shared_data = NULL;
     }
 
-
-
     if(shm_fd >= 0)
     {
-
         close(shm_fd);
-
 
         shm_unlink(
             SHM_NAME
         );
 
-
         shm_fd = -1;
     }
-
 }
-
