@@ -1,784 +1,290 @@
 # Intelligent Guard System
 
-An embedded intelligent guard system developed on the **Orange Pi Zero Plus 2 H5**. The system captures live video from a USB camera, performs human detection, exchanges data between C and Python components through shared memory, provides web-based monitoring, exposes REST-style APIs, collects system telemetry, maintains persistent detection history, and uses HTTPS for secure communication.
+<p align="center">
+  Embedded Linux surveillance and monitoring for the Orange Pi Zero Plus 2 H5
+</p>
 
-The project is primarily implemented in **C**, with Python used for the computer-vision pipeline and the API documentation/routing layer.
+<p align="center">
+  <img alt="C" src="https://img.shields.io/badge/core-C-00599C?logo=c&logoColor=white">
+  <img alt="Python" src="https://img.shields.io/badge/vision-Python-3776AB?logo=python&logoColor=white">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Orange%20Pi-F15A24?logo=linux&logoColor=white">
+  <img alt="API" src="https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white">
+  <img alt="Build" src="https://img.shields.io/badge/build-CMake-064F8C?logo=cmake&logoColor=white">
+</p>
 
----
+An intelligent guard system that captures live video, detects people, monitors the host, records events, and reports activity through a secure dashboard, REST API, email, and MQTT. The project is designed as a set of recoverable Linux services that start automatically with the device.
 
-## Overview
+System-level logic remains in **C**. Python is limited to computer vision and a thin FastAPI layer for OpenAPI/Swagger documentation.
 
-The system is designed as a modular embedded Linux application consisting of:
+> **Development status:** Active. Camera capture, shared-memory exchange, person detection, telemetry, MJPEG streaming, HTTPS, the C API, Swagger integration, and recent-event history form the current foundation. Alerting and advanced guard features are integrated as the project progresses.
 
-* V4L2-based camera acquisition
-* JPEG/MJPEG video streaming
-* Human detection using MobileNet-SSD
-* Shared-memory communication
-* System telemetry collection
-* Persistent detection history
-* C-based API library
-* FastAPI/Swagger API layer
-* Mongoose HTTP/HTTPS server
-* SSL/TLS support
-* systemd service management
-* Automatic service recovery
+## Table of contents
 
-The architecture separates hardware acquisition, image processing, system monitoring, API functionality, and service management into independent components.
+- [What the system does](#what-the-system-does)
+- [Architecture](#architecture)
+- [Technology and design choices](#technology-and-design-choices)
+- [Repository layout](#repository-layout)
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [API](#api)
+- [Services and recovery](#services-and-recovery)
+- [Security](#security)
+- [Validation plan](#validation-plan)
+- [Roadmap](#roadmap)
 
----
+## What the system does
 
-## System Architecture
+- Captures `640 × 480` YUYV video from a USB camera with V4L2 and MMAP.
+- Detects people with MobileNet-SSD and overlays boxes, count, FPS, date/time, and student ID.
+- Publishes the latest annotated frame as an MJPEG stream.
+- Reads CPU temperature, free memory, and CPU load directly from Linux virtual filesystems in C.
+- Exposes monitoring and control through an HTTPS dashboard and a versioned REST API.
+- Shares frames and runtime state between C and Python through POSIX shared memory.
+- Retains recent detections and supports a SQLite-backed event log for guard mode.
+- Reports detections through email and MQTT, with debounce, QoS 1, and LWT behavior.
+- Recovers from process crashes and camera stalls through systemd and a software watchdog.
+- Reduces vision workload when the CPU exceeds configured thermal thresholds.
 
-```text
-                         USB Camera
-                         /dev/video1
-                              │
-                              ▼
-                    ┌──────────────────┐
-                    │   C Camera       │
-                    │   V4L2 + MMAP    │
-                    │   camera.c       │
-                    └────────┬─────────┘
-                             │
-                       Latest YUYV Frame
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │   Shared Memory  │
-                    │   telemetry_t    │
-                    └────────┬─────────┘
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │ Python Vision    │
-                    │ NumPy / OpenCV   │
-                    │ MobileNet-SSD    │
-                    └────────┬─────────┘
-                             │
-                       person_count
-                             │
-                             ▼
-                    ┌──────────────────┐
-                    │   Shared Memory  │
-                    └────────┬─────────┘
-                             │
-              ┌──────────────┼───────────────┐
-              │              │               │
-              ▼              ▼               ▼
-        C Web Server     C API Library   FastAPI / Swagger
-         Mongoose          libguard_api       │
-              │              │               │
-              └──────────────┼───────────────┘
-                             │
-                             ▼
-                       HTTPS / REST API
-                             │
-                             ▼
-                        Web Browser
+## Architecture
+
+```mermaid
+flowchart TB
+    Camera["USB camera"] --> Capture["C capture service<br/>V4L2 + MMAP"]
+    Capture <--> State[("POSIX shared memory")]
+    State <--> Vision["Python vision<br/>MobileNet-SSD"]
+
+    State --> Core["C system core<br/>telemetry · history · commands"]
+    Core --> Web["Mongoose HTTPS server<br/>dashboard + MJPEG"]
+    Core --> API["C shared library<br/>FastAPI / Swagger gateway"]
+    Core --> Alerts["C alert services<br/>email + MQTT"]
+    Core --> Store[("event history / SQLite")]
+
+    Web --> Client["Browser / operator"]
+    API --> Client
+    Alerts --> External["Mail server / MQTT broker"]
 ```
 
----
-
-# Main Features
-
-## Camera and Video Processing
-
-* USB camera support through Linux **V4L2**
-* Camera device: `/dev/video1`
-* Resolution: `640 × 480`
-* Camera frame rate: `30 FPS`
-* MMAP-based frame acquisition
-* YUYV raw frame sharing
-* JPEG frame generation
-* Latest-frame buffering
-* MJPEG live streaming
-
-## Human Detection
-
-The vision pipeline is implemented in Python using:
-
-* NumPy
-* OpenCV
-* MobileNet-SSD
-* C/Python shared memory
-
-The C camera process provides the latest YUYV frame through shared memory. The Python vision process reads the frame, performs detection, and writes the resulting `person_count` back to shared memory.
-
-This allows the camera acquisition and vision processing components to operate as separate processes without transferring frames through network sockets.
-
-## System Telemetry
-
-The C implementation reads system information directly from Linux interfaces:
-
-```text
-/sys/class/thermal/thermal_zone0/temp
-/proc/meminfo
-/proc/stat
-```
-
-The API provides:
-
-* CPU temperature
-* Free memory
-* CPU usage
-
-No external Linux utilities such as `top`, `free`, `sensors`, or `cat` are required by the telemetry implementation.
-
-## Shared Memory
-
-The project uses POSIX shared memory for communication between the C and Python components.
-
-The shared structure contains camera, detection, system, and frame information, including:
-
-```text
-frame_number
-person_count
-fps
-cpu_temperature
-guard_mode
-person_detected
-timestamp
-jpeg_path
-frame_sequence
-frame_width
-frame_height
-frame_size
-frame_yuyv[]
-```
-
-The raw camera frame is stored as:
-
-```text
-640 × 480 × 2 = 614400 bytes
-```
-
-in YUYV 4:2:2 format.
-
-A frame-sequence mechanism is used to identify stable frames while the C camera component updates the shared buffer.
-
----
-
-# Part 2: REST API and Live Monitoring
-
-Part 2 extends the Part 1 web infrastructure with a C-based API library and a FastAPI/Swagger interface.
-
-The C library is compiled as:
-
-```text
-build/libguard_api.so
-```
-
-and loaded by the Python API layer using `ctypes`.
-
-This keeps the system-level functionality in C while allowing FastAPI to provide API routing and interactive Swagger documentation.
-
-## Implemented API Endpoints
-
-```text
-GET  /API/V1/TELEMETRY
-GET  /API/V1/PERSONS
-GET  /API/V1/HISTORY
-GET  /API/V1/STREAM
-POST /API/V1/COMMAND
-```
-
-### Telemetry
-
-```text
-GET /API/V1/TELEMETRY
-```
-
-Returns:
-
-```json
-{
-    "cpu_temperature": 48.52,
-    "free_memory_mb": 214,
-    "cpu_usage": 93.75
-}
-```
-
-The values are obtained from the C API.
-
-### Person Count
-
-```text
-GET /API/V1/PERSONS
-```
-
-Returns the current detected person count together with an ISO-style timestamp.
-
-Example:
-
-```json
-{
-    "person_count": 1,
-    "timestamp": "2026-08-09T15:53:39"
-}
-```
-
-### History
-
-```text
-GET /API/V1/HISTORY
-```
-
-The C history module stores the most recent five detection records in persistent storage.
-
-Each record contains:
-
-```text
-timestamp
-person_count
-cpu_temperature
-```
-
-The storage file is:
-
-```text
-/var/lib/guard_history.bin
-```
-
-The history therefore survives application restarts and system reboots.
-
-### Live Stream
-
-```text
-GET /API/V1/STREAM
-```
-
-The API forwards the live MJPEG stream produced by the C web server.
-
-For Swagger testing, the endpoint can return a single JPEG frame so that the request can complete normally in the Swagger interface.
-
-The underlying C server provides the continuous MJPEG stream using:
-
-```text
-multipart/x-mixed-replace
-```
-
-### Command
-
-```text
-POST /API/V1/COMMAND
-```
-
-The currently implemented command interface accepts the controlled `reboot` command.
-
-The API validates the command before execution and prevents duplicate reboot scheduling.
-
-Example request:
-
-```json
-{
-    "cmd": "reboot"
-}
-```
-
----
-
-# C API Layer
-
-The C API is defined in:
-
-```text
-include/api/guard_api.h
-```
-
-and implemented in:
-
-```text
-src/api/guard_api.c
-```
-
-The API currently provides functions for:
-
-```c
-guard_api_get_telemetry()
-guard_api_get_person_count()
-guard_api_get_timestamp()
-guard_api_get_stream_path()
-```
-
-The Python FastAPI layer loads:
-
-```text
-build/libguard_api.so
-```
-
-using:
-
-```python
-ctypes.CDLL()
-```
-
-and calls the C functions directly.
-
-This architecture prevents telemetry and person-count logic from being reimplemented in Python.
-
----
-
-# FastAPI and Swagger
-
-The API documentation layer is implemented in:
-
-```text
-python/api/main.py
-```
-
-FastAPI provides:
-
-* REST endpoint routing
-* JSON responses
-* HTTP status handling
-* OpenAPI generation
-* Swagger UI
-
-Swagger is available through:
-
-```text
-/docs
-```
-
-The API layer communicates with the C implementation through the compiled shared library.
-
----
-
-# HTTPS
-
-The system supports HTTPS through the Mongoose web server.
-
-Certificates are stored in:
-
-```text
-cert/
-├── server.crt
-└── server.key
-```
-
-The C web server listens on:
-
-```text
-HTTP   : 8080
-HTTPS  : 8443
-```
-
-HTTP requests are redirected to HTTPS using HTTP status:
-
-```text
-301 Moved Permanently
-```
-
-The HTTPS server uses the self-signed certificate generated for the embedded system.
-
----
-
-# Web Server
-
-The C web server is implemented using **Mongoose**.
-
-Main source:
-
-```text
-src/web/web_server.c
-```
-
-The server provides:
-
-```text
-/
- /stream
- /live/latest.jpg
- /telemetry
- /persons
-```
-
-The MJPEG stream continuously sends the newest camera frame and avoids building a backlog of old frames.
-
-A frame ID is used to ensure that the same camera frame is not repeatedly transmitted.
-
----
-
-# Persistent History
-
-Detection history is implemented in:
-
-```text
-src/history/history.c
-include/history/history.h
-```
-
-The history manager maintains a maximum of five entries.
-
-When the history is full, the oldest record is removed and the newest record is appended.
-
-```text
-Entry 1
-Entry 2
-Entry 3
-Entry 4
-Entry 5
-        ↓
-new event
-        ↓
-Entry 2
-Entry 3
-Entry 4
-Entry 5
-New Entry
-```
-
-The data is stored in:
-
-```text
-/var/lib/guard_history.bin
-```
-
-and restored when the application starts.
-
----
-
-# Configuration
-
-The main configuration is stored in:
-
-```text
-configs/settings.json
-```
-
-Example:
-
-```json
-{
-    "vision": {
-        "jpeg_path": "html/live/latest.jpg",
-        "jpeg_quality": 90
-    },
-
-    "camera": {
-        "device": 1,
-        "width": 640,
-        "height": 480,
-        "fps": 30
-    }
-}
-```
-
-Detection can also be controlled through:
-
-```text
-configs/detection.enabled
-```
-
----
-
-# Project Structure
-
-```text
-guard-system/
-├── build/
-│   ├── guard-system
-│   └── libguard_api.so
-│
-├── cert/
-│   ├── server.crt
-│   └── server.key
-│
-├── configs/
-│   ├── settings.json
-│   └── detection.enabled
-│
-├── docs/
-│   └── thermal_tests/
-│
-├── html/
-│   ├── index.html
-│   └── live/
-│       └── latest.jpg
-│
-├── include/
-│   ├── api/
-│   ├── application/
-│   ├── camera/
-│   ├── common/
-│   ├── history/
-│   ├── shared_memory/
-│   ├── utils/
-│   └── web/
-│
-├── models/
-│   └── mobilenet-ssd/
-│
-├── python/
-│   ├── api/
-│   │   └── main.py
-│   └── vision/
-│       ├── camera.py
-│       ├── detector.py
-│       ├── jpeg_writer.py
-│       ├── main.py
-│       └── shared_memory.py
-│
-├── src/
-│   ├── api/
-│   ├── application/
-│   ├── camera/
-│   ├── common/
-│   ├── history/
-│   ├── shared_memory/
-│   ├── utils/
-│   └── web/
-│
-├── third_party/
-│   ├── cJSON/
-│   └── mongoose/
-│
-├── CMakeLists.txt
-├── Makefile
-└── README.md
-```
-
----
-
-# Build
-
-From the project directory:
+### Runtime data flow
+
+1. The C capture service reads the camera and writes the newest YUYV frame to shared memory.
+2. The vision process reads a stable frame, detects people, annotates it, and updates the shared state.
+3. C modules expose the resulting image, count, telemetry, and history to the dashboard and API.
+4. A detection can create an event, persist evidence, and trigger email/MQTT notifications.
+5. systemd and the watchdog supervise the services; thermal management can lower FPS or resolution.
+
+The frame sequence field prevents readers from consuming a buffer while it is being updated. Only the newest frame is streamed, so slow clients do not create an ever-growing backlog.
+
+## Technology and design choices
+
+| Area | Implementation | Reason |
+| --- | --- | --- |
+| Camera | C, V4L2, MMAP | Low-copy access to the Linux camera device |
+| Inter-process data | POSIX shared memory | Fast local exchange without frame transport over sockets |
+| Detection | Python, OpenCV, MobileNet-SSD | Lightweight inference on embedded hardware |
+| Web server | C, Mongoose | Small native HTTP/HTTPS and MJPEG server |
+| Core API | C shared library | Keeps telemetry, history, and command logic native |
+| API documentation | FastAPI, Swagger, `ctypes` | Thin interactive gateway over the C library |
+| Messaging | C, libmosquitto | MQTT QoS 1 publishing and Last Will support |
+| Email | C | Native alert path with image attachments and debounce |
+| Persistence | Recent-history store and SQLite | Fast recent lookup plus durable event records |
+| Supervision | systemd | Boot startup, dependencies, restart, and logging |
+
+## Repository layout
+
+The repository is organized by responsibility rather than assignment section:
+
+| Path | Purpose |
+| --- | --- |
+| `src/` | Native application modules: camera, web, API, telemetry, history, and shared state |
+| `include/` | Public C headers matching the native modules |
+| `python/vision/` | Detection pipeline and annotated-frame generation |
+| `python/api/` | FastAPI/OpenAPI gateway that calls `libguard_api.so` |
+| `html/` | Dashboard assets and the latest published image |
+| `configs/` | Runtime settings and feature switches |
+| `cert/` | Local TLS certificate and key; private keys must not be committed |
+| `models/` | MobileNet-SSD model files |
+| `services/` | systemd unit definitions, when installed on the target |
+| `docs/` | Architecture notes, experiment results, screenshots, and report assets |
+| `third_party/` | Vendored dependencies such as Mongoose and cJSON |
+| `build/` | Generated binaries and shared libraries; not source-controlled |
+
+Key build outputs:
+
+- `build/guard-system` — native application
+- `build/libguard_api.so` — C API loaded by the FastAPI layer
+
+## Getting started
+
+### Requirements
+
+- Orange Pi Zero Plus 2 H5 or a Linux development machine
+- Linux camera exposed as `/dev/video*`
+- C compiler, CMake, and Make
+- OpenSSL development files
+- Python 3 with OpenCV, NumPy, FastAPI, and Uvicorn
+- Mosquitto development files for MQTT features
+- SQLite development files for persistent guard events
+
+### Build
+
+After cloning the repository:
 
 ```bash
-mkdir -p build
-cd build
-cmake ..
-make -j$(nproc)
+cmake -S . -B build
+cmake --build build --parallel
 ```
 
-The main executable is generated as:
-
-```text
-build/guard-system
-```
-
-and the C API shared library as:
-
-```text
-build/libguard_api.so
-```
-
----
-
-# Running the System
-
-The main application can be started manually with:
+Run the native application during development:
 
 ```bash
 ./build/guard-system
 ```
 
-The production deployment uses systemd for automatic startup and recovery.
+Production deployment uses systemd rather than manually launched processes. See [Services and recovery](#services-and-recovery).
 
-Check service status:
+### Access
 
-```bash
-systemctl status guard-webserver.service
+The default development endpoints are:
+
+| Interface | URL |
+| --- | --- |
+| Secure dashboard | `https://<device-ip>:8443/` |
+| HTTP redirect | `http://<device-ip>:8080/` |
+| Swagger UI | `https://<device-ip>:8443/docs` |
+| MJPEG stream | `https://<device-ip>:8443/stream` |
+
+Because the device uses a self-signed certificate, a browser warning is expected until the certificate is trusted locally.
+
+## Configuration
+
+Primary runtime settings are stored in `configs/settings.json`:
+
+```json
+{
+  "vision": {
+    "jpeg_path": "html/live/latest.jpg",
+    "jpeg_quality": 90
+  },
+  "camera": {
+    "device": 1,
+    "width": 640,
+    "height": 480,
+    "fps": 30
+  }
+}
 ```
 
-Restart:
+Before running on a new device:
 
-```bash
-systemctl restart guard-webserver.service
+1. Confirm the camera index with `v4l2-ctl --list-devices`.
+2. Set the camera device, resolution, and FPS in `configs/settings.json`.
+3. Generate a self-signed certificate whose Common Name is the student ID.
+4. Provide email and MQTT credentials through protected configuration or environment files.
+5. Do not place passwords, API tokens, or private keys in source control.
+
+## API
+
+FastAPI documents the interface, but the underlying state, telemetry, history, and command operations are implemented in C and exposed through `libguard_api.so`.
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/API/V1/STREAM` | Live MJPEG stream; Swagger may request a single JPEG frame |
+| `GET` | `/API/V1/PERSONS` | Current person count and timestamp |
+| `GET` | `/API/V1/TELEMETRY` | CPU temperature, free memory, and CPU usage |
+| `GET` | `/API/V1/HISTORY` | Five most recent detection records |
+| `POST` | `/API/V1/COMMAND` | Allow-listed device command, currently `reboot` |
+
+Example telemetry response:
+
+```json
+{
+  "cpu_temperature": 48.52,
+  "free_memory_mb": 214,
+  "cpu_usage": 37.25
+}
 ```
 
-View logs:
+Example command request:
 
-```bash
-journalctl -u guard-webserver.service -f
+```json
+{
+  "cmd": "reboot"
+}
 ```
 
-Boot-time behavior can be examined using:
+Telemetry is read directly in C from `/proc/stat`, `/proc/meminfo`, and `/sys/class/thermal/thermal_zone*/temp`; shell commands are not used for data collection.
+
+## Services and recovery
+
+```mermaid
+flowchart LR
+    Boot["Linux boot"] --> Network["network ready"]
+    Boot --> Camera["camera ready"]
+    Network --> Web["web / API"]
+    Camera --> Capture["capture service"]
+    Web --> Vision["vision service"]
+    Capture --> Vision
+    Vision --> MQTT["MQTT client"]
+    Vision --> Email["email alerts"]
+```
+
+Unit files use explicit `After=`/`Requires=` relationships and a restart policy so dependent processes start in the correct order and recover after failure.
+
+Common operational commands:
 
 ```bash
-systemd-analyze
+sudo systemctl status guard-webserver.service
+sudo systemctl restart guard-webserver.service
+sudo journalctl -u guard-webserver.service -f
 systemd-analyze blame
 ```
 
----
+The software watchdog separately detects a stalled frame sequence. If no new frame arrives within the configured interval, it records the fault, sends a camera-tamper alert, and restarts the affected service.
 
-# Testing
+## Security
 
-Part 2 includes dedicated evaluation tests covering system behavior and performance.
+- HTTPS-only application access with permanent HTTP-to-HTTPS redirection.
+- Self-signed TLS certificate with the student ID as the certificate CN.
+- Allow-listed command handling; arbitrary shell input is rejected.
+- MQTT authentication enabled and anonymous access disabled.
+- SSH root login disabled; key-based access is preferred.
+- Secrets supplied outside the source tree with restrictive file permissions.
+- Generic external error responses, with detailed diagnostics retained in the service journal.
+- Services run with the minimum permissions required by their device and network roles.
 
-## Test 2-1 — CPU Temperature
+## Validation plan
 
-Temperature is measured every 30 seconds under:
+Results, plots, screenshots, and videos belong in `docs/` and the final report; the README provides the navigation layer.
 
-1. Idle operation
-2. Streaming only
-3. Streaming + detection
+| Area | Validation |
+| --- | --- |
+| Boot and recovery | Boot timing, automatic startup, forced-process restart, full power-cycle recovery |
+| HTTPS | HTTP 301 redirect and certificate CN inspection |
+| API | Live Swagger tests for every endpoint |
+| Performance | Temperature under three workloads, five-minute memory trend, and 50 concurrent telemetry requests |
+| Resilience | Two-minute network outage and reconnection |
+| Detection | Accuracy under four lighting conditions, printed-image spoof test, and resolution trade-off |
+| Messaging | MQTT LWT, broker recovery, end-to-end latency, and rejected anonymous connection |
+| Guard features | Alarm flow, SQLite records, camera watchdog recovery, and adaptive thermal response |
 
-The collected data is used to evaluate the thermal behavior of the system under increasing workloads.
+## Roadmap
 
-**Result:**
-*Test results and temperature graph will be inserted here.*
+- [x] Modular C project foundation and CMake build
+- [x] V4L2 capture and POSIX shared memory
+- [x] MobileNet-SSD detection and annotated live frames
+- [x] Native telemetry, HTTPS dashboard, and MJPEG stream
+- [x] C API library with FastAPI/Swagger gateway
+- [x] Recent detection history
+- [ ] C email alerts with 30-second debounce
+- [ ] C MQTT client with QoS 1, authentication, and LWT
+- [ ] Guard-mode API, emergency topic, and SQLite black box
+- [ ] Camera watchdog and automatic recovery evidence
+- [ ] Adaptive thermal policy and performance experiments
+- [ ] Final report, screenshots, plots, and demonstration videos
 
-```text
-[PLACEHOLDER — TEST 2-1 GRAPH]
-```
+## Author
 
----
+**Amin Feizi Shahri**  
+M.Sc. Digital Systems — Sharif University of Technology
 
-## Test 2-2 — Memory Consumption
-
-RSS and virtual memory usage are monitored during continuous streaming.
-
-The purpose is to identify any increasing memory consumption that could indicate a memory leak.
-
-**Result:**
-*Memory usage graph and analysis will be inserted here.*
-
-```text
-[PLACEHOLDER — TEST 2-2 GRAPH]
-```
-
----
-
-## Test 2-3 — Concurrent API Load
-
-Multiple concurrent requests are sent to:
-
-```text
-/API/V1/TELEMETRY
-```
-
-The test measures the system's behavior under burst API traffic.
-
-Telemetry collected during the test includes:
-
-* CPU temperature
-* CPU usage
-* Free memory
-
-Request latency is also recorded for later analysis.
-
-**Result:**
-*Latency/telemetry graphs and analysis will be inserted here.*
-
-```text
-[PLACEHOLDER — TEST 2-3 GRAPH]
-```
-
----
-
-## Test 2-4 — Network Failure and Recovery
-
-The network connection is intentionally interrupted while the system is operating.
-
-The test evaluates:
-
-* Camera/stream behavior
-* API availability
-* Application stability
-* Recovery after reconnection
-* systemd service behavior
-
-**Result:**
-*Network failure/recovery logs and screenshots will be inserted here.*
-
-```text
-[PLACEHOLDER — TEST 2-4 LOG SCREENSHOT]
-```
-
----
-
-## Test 2-5 — Security Validation
-
-The security test evaluates:
-
-* Command injection rejection
-* Command validation
-* Process privilege
-* Absence of embedded credentials
-* HTTP → HTTPS enforcement
-
-Malicious command inputs are tested against the command endpoint to verify that unsupported commands are rejected.
-
-**Result:**
-*Security test screenshots, command responses, and analysis will be inserted here.*
-
-```text
-[PLACEHOLDER — TEST 2-5 SECURITY SCREENSHOT]
-```
-
----
-
-# Security
-
-The system incorporates several security mechanisms:
-
-* HTTPS communication using TLS
-* HTTP → HTTPS redirection
-* Controlled command interface
-* Input validation for API commands
-* No direct shell execution for arbitrary user commands through the API
-* Generic API error responses
-* Separation of C system functionality from the API presentation layer
-* systemd-based service management
-* SSH security configuration inherited from Part 1
-
-Security validation is documented in Test 2-5.
-
----
-
-# Development Approach
-
-The project follows a modular architecture:
-
-```text
-Hardware
-   │
-   ▼
-Camera Acquisition
-   │
-   ▼
-Shared Memory
-   │
-   ▼
-Vision Processing
-   │
-   ▼
-Detection Results
-   │
-   ├───────────────┐
-   ▼               ▼
-C API          Web Server
-   │               │
-   └───────┬───────┘
-           ▼
-      FastAPI / Swagger
-           │
-           ▼
-        HTTPS API
-```
-
-C is responsible for the core embedded functionality, including camera acquisition, shared-memory management, telemetry, history management, and the native web/API interface. Python is used for the computational vision pipeline and for the FastAPI documentation/routing layer.
-
----
-
-# Result
-
-The completed system provides an embedded Linux guard platform with:
-
-* Live USB camera acquisition
-* Human detection
-* Shared-memory communication
-* MJPEG video streaming
-* System telemetry
-* Persistent detection history
-* REST-style API endpoints
-* Interactive Swagger documentation
-* HTTPS communication
-* HTTP → HTTPS redirection
-* Modular C architecture
-* Python-based vision processing
-* systemd-based automatic startup and recovery
-* Performance and security validation
-
-The architecture is designed to keep hardware and system-level functionality close to the C layer while providing a practical Python-based interface for computer vision and API documentation.
+This repository is an academic embedded-systems project. Its self-signed TLS setup and demonstration control endpoint are intended for a trusted lab network; review the threat model before any real-world deployment.
